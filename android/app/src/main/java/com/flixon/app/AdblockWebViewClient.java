@@ -7,22 +7,27 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 
+import java.io.ByteArrayInputStream;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.Map;
+
 /**
  * WebViewClient que estende o do Capacitor.
  *
- * ESTRATÉGIA (conforme diagnóstico de erro 1200 do Cloudflare):
+ * ESTRATÉGIA DEFINITIVA CONTRA ANÚNCIOS DO FEMBED:
  *
- *  shouldInterceptRequest → PASS-THROUGH TOTAL.
- *    NÃO bloqueia nada na rede. Motivo: bloquear requisições quebra o
- *    Cloudflare (Error 1200 - Rate Limited) e pode quebrar cookies de
- *    sessão do player. O conteúdo do player precisa fluir livremente.
+ *  shouldInterceptRequest → modifica o HTML das páginas de embed do fembed.
+ *    O fembed tem uma flag NATIVA "adsDisabled" que é false por padrão.
+ *    Quando true, ele NÃO carrega popup ads, overlay ads nem pop-under.
+ *    Interceptamos o HTML, trocamos false → true, e devolvemos modificado.
+ *    É cirúrgico: SÓ páginas /e/ do fembed são tocadas. Nenhum outro site.
+ *    Não quebra Cloudflare nem o player.
  *
  *  shouldOverrideUrlLoading → bloqueia navegação para anúncios/scams.
- *    O tigrinho/scam tenta navegar pra URL externa → bloqueado.
  *
- *  onPageStarted / onPageFinished → INJETA JS anti-popup.
- *    Neutraliza window.open, remove overlays, bloqueia redirects.
- *    Isto é o que realmente impede o popup do "instale o navegador".
+ *  onCreateWindow → false (bloqueia popups via WebChromeClient).
  */
 public class AdblockWebViewClient extends BridgeWebViewClient {
 
@@ -31,15 +36,32 @@ public class AdblockWebViewClient extends BridgeWebViewClient {
     }
 
     // ═══════════════════════════════════════════
-    //  RECURSOS: PASS-THROUGH TOTAL (não quebra Cloudflare/player)
+    //  INTERCEPTA E MODIFICA O HTML DO FEMBED
+    //  Liga a flag adsDisabled = true (recurso NATIVO do próprio fembed)
     // ═══════════════════════════════════════════
     @Override
     public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+        String url = null;
+        if (request != null && request.getUrl() != null) {
+            url = request.getUrl().toString();
+        }
+
+        // SÓ modifica páginas de embed do fembed (cirúrgico)
+        if (url != null && isFembedEmbed(url)) {
+            try {
+                WebResourceResponse modified = fetchAndCleanFembed(url, request);
+                if (modified != null) return modified;
+            } catch (Exception e) {
+                // Erro: deixa carregar normalmente (fallback)
+            }
+        }
+
+        // Tudo o mais: pass-through normal
         return super.shouldInterceptRequest(view, request);
     }
 
     // ═══════════════════════════════════════════
-    //  NAVEGAÇÃO: bloqueia anúncios/scams por DOMÍNIO e PALAVRA-CHAVE
+    //  NAVEGAÇÃO: bloqueia anúncios/scams
     // ═══════════════════════════════════════════
     @Override
     public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
@@ -62,49 +84,108 @@ public class AdblockWebViewClient extends BridgeWebViewClient {
         return super.shouldOverrideUrlLoading(view, url);
     }
 
-    // ═══════════════════════════════════════════
-    //  INJEÇÃO DE JS — quando a página COMEÇA a carregar
-    //  Roda cedo, antes dos scripts de anúncio do player
-    // ═══════════════════════════════════════════
     @Override
     public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
         super.onPageStarted(view, url, favicon);
         injectAntiPopupScript(view);
     }
 
-    // ═══════════════════════════════════════════
-    //  INJEÇÃO DE JS — quando a página TERMINA de carregar
-    //  Garante que o script esteja ativo após o player inicializar
-    // ═══════════════════════════════════════════
     @Override
     public void onPageFinished(WebView view, String url) {
         super.onPageFinished(view, url);
         injectAntiPopupScript(view);
     }
 
+    // ─────────────────────────────────────────────
+    //  HELPERS
+    // ─────────────────────────────────────────────
+
+    /** Verifica se é uma página de embed do fembed */
+    private boolean isFembedEmbed(String url) {
+        if (url == null) return false;
+        String lower = url.toLowerCase();
+        return lower.contains("fembed") && lower.contains("/e/");
+    }
+
     /**
-     * Injeta o script anti-popup no documento principal.
-     * O script neutraliza window.open, remove overlays de anúncio
-     * e bloqueia redirecionamentos forçados.
+     * Busca o HTML do fembed e desativa os anúncios nativamente.
+     * A flag adsDisabled é do PRÓPRIO fembed — não é hack, é recurso deles.
      */
+    private WebResourceResponse fetchAndCleanFembed(String url, WebResourceRequest request) {
+        HttpURLConnection conn = null;
+        try {
+            conn = (HttpURLConnection) new URL(url).openConnection();
+            conn.setConnectTimeout(10000);
+            conn.setReadTimeout(15000);
+            conn.setInstanceFollowRedirects(true);
+            conn.setRequestMethod("GET");
+
+            // Copia headers da requisição original (User-Agent, etc.)
+            Map<String, String> headers = request.getRequestHeaders();
+            if (headers != null) {
+                String ua = headers.get("User-Agent");
+                if (ua != null) conn.setRequestProperty("User-Agent", ua);
+                String ref = headers.get("Referer");
+                if (ref != null) conn.setRequestProperty("Referer", ref);
+            }
+            conn.setRequestProperty("Accept", "text/html,application/xhtml+xml");
+            conn.setRequestProperty("Accept-Language", "pt-BR,pt;q=0.9,en;q=0.8");
+
+            InputStream is = conn.getInputStream();
+            String html = readStream(is);
+
+            // ══ DESATIVA ANÚNCIOS NATIVAMENTE (flag do próprio fembed) ══
+            // Troca TODAS as variações de "adsDisabled = false" → "true"
+            html = html.replaceAll("(?i)adsDisabled\\s*=\\s*false", "adsDisabled   = true");
+
+            // Zera a div de boot de anúncios
+            html = html.replace("$('#adBoot')", "$('#___disabled___')");
+
+            // Desativa bootPopupAds inteiramente
+            html = html.replaceAll("function\\s+bootPopupAds\\s*\\(",
+                                   "function bootPopupAds_disabled_(");
+
+            // Content-Type
+            String contentType = "text/html";
+            String ct = conn.getContentType();
+            if (ct != null && ct.contains(";")) {
+                contentType = ct.split(";")[0].trim();
+            } else if (ct != null) {
+                contentType = ct;
+            }
+
+            conn.disconnect();
+            return new WebResourceResponse(
+                contentType, "utf-8",
+                new ByteArrayInputStream(html.getBytes("utf-8"))
+            );
+        } catch (Exception e) {
+            if (conn != null) conn.disconnect();
+            return null;
+        }
+    }
+
+    /** Lê um InputStream totalmente para String */
+    private String readStream(InputStream is) throws Exception {
+        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+        byte[] buffer = new byte[4096];
+        int len;
+        while ((len = is.read(buffer)) != -1) {
+            baos.write(buffer, 0, len);
+        }
+        is.close();
+        return baos.toString("utf-8");
+    }
+
+    /** Injeta JS anti-popup no documento principal */
     private void injectAntiPopupScript(WebView view) {
         view.evaluateJavascript(ANTI_POPUP_JS, null);
     }
 
-    // Script JS anti-popup (injetado em onPageStarted e onPageFinished)
     private static final String ANTI_POPUP_JS =
         "(function(){" +
         "  try {" +
-        // 1) Neutraliza window.open (popups/pop-under)
         "    window.open = function() { return null; };" +
-        // 2) Neutraliza tentativas de redirecionar a janela principal
-        "    try {" +
-        "      Object.defineProperty(window, 'location', {" +
-        "        configurable: false," +
-        "        get: function() { return document.location; }," +
-        "        set: function(v) { /* bloqueado */ }" +
-        "      });" +
-        "    } catch(e) {}" +
         "    try {" +
         "      Object.defineProperty(window.top, 'location', {" +
         "        configurable: false," +
@@ -112,50 +193,26 @@ public class AdblockWebViewClient extends BridgeWebViewClient {
         "        set: function(v) { /* bloqueado */ }" +
         "      });" +
         "    } catch(e) {}" +
-        // 3) Remove overlays de anúncio com z-index alto (não remove o player!)
         "    var removeAds = function() {" +
         "      try {" +
         "        document.querySelectorAll('div[style*=\"z-index\"]').forEach(function(el) {" +
         "          try {" +
         "            var z = parseInt(el.style.zIndex || '0', 10);" +
-        "            if (z > 100 && !el.id.includes('player') && !el.className.includes('player')) {" +
-        "              if (el.tagName !== 'VIDEO' && !(el.querySelector && el.querySelector('video'))) {" +
-        "                el.remove();" +
-        "              }" +
+        "            if (z > 100 && el.id.indexOf('player') === -1) {" +
+        "              if (el.tagName !== 'VIDEO' && !(el.querySelector && el.querySelector('video'))) el.remove();" +
         "            }" +
         "          } catch(e) {}" +
         "        });" +
-        // Remove iframes de anúncio (não os do player legítimo)
         "        document.querySelectorAll('iframe').forEach(function(el) {" +
         "          var src = (el.src || '').toLowerCase();" +
         "          if (src.indexOf('fembed') === -1 && src.indexOf('superflix') === -1 && src.indexOf('myembed') === -1) {" +
-        "            if (src.indexOf('ads') !== -1 || src.indexOf('ad.') !== -1 || src.indexOf('popup') !== -1 || src.indexOf('propeller') !== -1 || src.indexOf('popcash') !== -1 || src.indexOf('adsterra') !== -1 || src.indexOf('monetag') !== -1) {" +
-        "              el.remove();" +
-        "            }" +
+        "            if (src.indexOf('ads') !== -1 || src.indexOf('popup') !== -1 || src.indexOf('propeller') !== -1 || src.indexOf('popcash') !== -1 || src.indexOf('monetag') !== -1) el.remove();" +
         "          }" +
-        "        });" +
-        // Remove elementos com classes suspeitas
-        "        document.querySelectorAll('[class*=\"popup\"],[class*=\"advert\"],[class*=\"banner-ad\"],[class*=\"overlay-ad\"]').forEach(function(el) {" +
-        "          if (el.tagName !== 'VIDEO' && !(el.querySelector && el.querySelector('video'))) el.remove();" +
         "        });" +
         "      } catch(e) {}" +
         "    };" +
         "    removeAds();" +
         "    setInterval(removeAds, 500);" +
-        // 4) Intercepta cliques que tentam abrir _blank ou redirecionar
-        "    document.addEventListener('click', function(ev) {" +
-        "      try {" +
-        "        var t = ev.target;" +
-        "        while (t && t !== document.body) {" +
-        "          if (t.tagName === 'A' && t.target === '_blank') { ev.preventDefault(); ev.stopPropagation(); return false; }" +
-        "          if (t.onclick) {" +
-        "            var oc = String(t.onclick);" +
-        "            if (oc.indexOf('window.open') !== -1 || oc.indexOf('location.href') !== -1) { ev.preventDefault(); ev.stopPropagation(); return false; }" +
-        "          }" +
-        "          t = t.parentNode;" +
-        "        }" +
-        "      } catch(e) {}" +
-        "    }, true);" +
         "  } catch(e) {}" +
         "})();";
 }
