@@ -16,7 +16,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Fundo preto imersivo
+        // Fundo preto imersivo (identidade do FlixOn)
         try {
             Window window = getWindow();
             window.setStatusBarColor(Color.parseColor("#0a0a0a"));
@@ -29,6 +29,23 @@ public class MainActivity extends BridgeActivity {
         installAdblock();
     }
 
+    /**
+     * Instala a defesa anti-anúncio em 3 camadas:
+     *
+     * 1) WebViewClient:
+     *    - shouldInterceptRequest: PASS-THROUGH (não quebra Cloudflare/player)
+     *    - shouldOverrideUrlLoading: bloqueia navegação para anúncios
+     *    - onPageStarted/onPageFinished: injeta JS anti-popup
+     *
+     * 2) WebChromeClient (A CHAVE):
+     *    - setSupportMultipleWindows(true) => window.open() dispara onCreateWindow
+     *    - onCreateWindow retorna false => janela NÃO é criada
+     *    Isto garante que NENHUM popup abra, mesmo se o script do player
+     *    tentar burlar o JS.
+     *
+     * 3) JavaScriptCanOpenWindowsAutomatically(false):
+     *    Reforço extra contra popups automáticos.
+     */
     private void installAdblock() {
         try {
             Bridge bridge = this.bridge;
@@ -38,35 +55,39 @@ public class MainActivity extends BridgeActivity {
 
             WebSettings settings = webView.getSettings();
 
-            // Performance
+            // Performance e compatibilidade
             settings.setDomStorageEnabled(true);
             settings.setJavaScriptEnabled(true);
             settings.setMediaPlaybackRequiresUserGesture(false);
             settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
             settings.setCacheMode(WebSettings.LOAD_DEFAULT);
 
-            // ══ 1) ADBLOCK NATIVO + BLOQUEIO DE NAVEGAÇÃO ══
-            // Intercepta anúncios na rede (shouldInterceptRequest)
-            // E bloqueia navegação para URLs de anúncio (shouldOverrideUrlLoading)
-            // → Impede o "tigrinho" de abrir/abandonar o app
+            // ══ 1) WebViewClient: pass-through na rede + bloqueio de navegação + JS ══
             webView.setWebViewClient(new AdblockWebViewClient(bridge));
 
-            // ══ 2) BLOQUEIO DE POPUPS ══
-            // supportMultipleWindows=false => window.open() retorna null
-            // → Nenhum popup de anúncio abre
-            settings.setSupportMultipleWindows(false);
+            // ══ 2) WebChromeClient: BLOQUEIA criação de janelas (A CHAVE) ══
+            // Habilita suporte a múltiplas janelas para que window.open()
+            // dispare onCreateWindow (que retorna false = bloqueado)
+            settings.setSupportMultipleWindows(true);
             settings.setJavaScriptCanOpenWindowsAutomatically(false);
+            webView.setWebChromeClient(new AdblockWebChromeClient(bridge));
         } catch (Exception e) {}
     }
 
     @Override
     public void onResume() {
         super.onResume();
+        // Re-garante os clients ao voltar para o app
         try {
             if (this.bridge != null && this.bridge.getWebView() != null) {
                 WebView wv = this.bridge.getWebView();
                 if (!(wv.getWebViewClient() instanceof AdblockWebViewClient)) {
                     wv.setWebViewClient(new AdblockWebViewClient(this.bridge));
+                }
+                if (!(wv.getWebChromeClient() instanceof AdblockWebChromeClient)) {
+                    wv.getSettings().setSupportMultipleWindows(true);
+                    wv.getSettings().setJavaScriptCanOpenWindowsAutomatically(false);
+                    wv.setWebChromeClient(new AdblockWebChromeClient(this.bridge));
                 }
             }
         } catch (Exception e) {}
