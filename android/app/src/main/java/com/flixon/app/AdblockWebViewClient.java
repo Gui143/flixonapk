@@ -14,14 +14,16 @@ import java.net.URL;
 import java.util.Map;
 
 /**
- * WebViewClient — Neutraliza TODOS os anuncios de players de embed.
+ * WebViewClient — Adblock DEFINITIVO para players de embed (fembed + mirrors).
  *
- * Intercepta o HTML das paginas de embed (fembed + mirrors) e:
- *  1) Ativa a flag NATIVA adsDisabled=true
- *  2) Desativa todas as funcoes de boot de anuncios
- *  3) REMOVE o script waust.at (pop-under de cassino: Brazino 777, etc.)
- *  4) Neutraliza o sistema WAU inteiro
- *  5) Detecta desafio Cloudflare e faz pass-through (nao quebra o player)
+ * DUAS camadas de bloqueio:
+ *
+ * 1) shouldInterceptRequest:
+ *    a) Bloqueia api.php?action=getAds (o iframe de anúncio do fembed)
+ *    b) Bloqueia scripts de pop-under (waust.at, popads, etc.)
+ *    c) Modifica HTML de páginas /e/ para filtrar anúncios da resposta AJAX
+ *
+ * 2) shouldOverrideUrlLoading: bloqueia navegação para cassinos/scams
  */
 public class AdblockWebViewClient extends BridgeWebViewClient {
 
@@ -42,14 +44,33 @@ public class AdblockWebViewClient extends BridgeWebViewClient {
         if (request != null && request.getUrl() != null) {
             url = request.getUrl().toString();
         }
+        if (url == null) return super.shouldInterceptRequest(view, request);
+        String lower = url.toLowerCase();
 
-        // Bloqueia script de pop-under de cassino (waust.at) em QUALQUER site
-        if (url != null && isPopunderScript(url)) {
+        // ══ A) BLOQUEIA api.php?action=getAds (anúncio do fembed) ══
+        // Esta é a URL do iframe de anúncio injetado na resposta de getPlayer
+        if (lower.contains("action=getads") || lower.contains("action=getplayer")) {
+            // getPlayer retorna HTML com o player + iframe de getAds
+            // Vamos limpar a resposta em vez de bloquear
+            if (lower.contains("action=getplayer") && isFembedApi(url)) {
+                try {
+                    WebResourceResponse cleaned = cleanGetPlayerResponse(url, request);
+                    if (cleaned != null) return cleaned;
+                } catch (Exception e) {}
+            }
+            // getAds → bloqueia totalmente (retorna vazio)
+            if (lower.contains("action=getads")) {
+                return emptyResponse();
+            }
+        }
+
+        // ══ B) Bloqueia scripts de pop-under de cassino ══
+        if (isPopunderScript(url)) {
             return emptyResponse();
         }
 
-        // Se for pagina de embed de player conhecido → modifica o HTML
-        if (url != null && isEmbedPage(url)) {
+        // ══ C) Modifica HTML de páginas de embed ══
+        if (isEmbedPage(url)) {
             try {
                 WebResourceResponse mod = fetchAndClean(url, request);
                 if (mod != null) return mod;
@@ -90,30 +111,81 @@ public class AdblockWebViewClient extends BridgeWebViewClient {
 
     // ─── HELPERS ───
 
-    /** Scripts de pop-under de cassino (brazino, blaze, etc.) */
-    private boolean isPopunderScript(String url) {
-        if (url == null) return false;
+    private boolean isFembedApi(String url) {
         String lower = url.toLowerCase();
-        return lower.contains("waust.at") ||
-               lower.contains("waust.") ||
-               lower.contains("popads.net") ||
-               lower.contains("popcash.net") ||
-               lower.contains("propellerads.com") ||
+        if (lower.contains("fembed")) return true;
+        for (String h : EMBED_HOSTS) {
+            if (lower.contains(h)) return true;
+        }
+        return false;
+    }
+
+    private boolean isPopunderScript(String url) {
+        String lower = url.toLowerCase();
+        return lower.contains("waust.at") || lower.contains("waust.") ||
+               lower.contains("popads.net") || lower.contains("popcash.net") ||
+               lower.contains("propellerads.com") || lower.contains("monetag.com") ||
+               lower.contains("adsterra.com") || lower.contains("hilltopads.com") ||
                lower.contains("onclickperformance.com") ||
                lower.contains("highperformanceformat.com") ||
-               lower.contains("monetag.com") ||
-               lower.contains("adsterra.com") ||
-               lower.contains("hilltopads.com");
+               lower.contains("alphonso.tv") || lower.contains("admaven.com");
     }
 
     private boolean isEmbedPage(String url) {
-        if (url == null) return false;
         String lower = url.toLowerCase();
         if (!lower.contains("/e/") && !lower.contains("/v/")) return false;
         for (String host : EMBED_HOSTS) {
             if (lower.contains(host)) return true;
         }
         return lower.contains("fembed");
+    }
+
+    /**
+     * Limpa a resposta de api.php?action=getPlayer.
+     * Remove TODOS os iframes de anúncio (getAds) do HTML retornado.
+     * Mantém apenas o player de vídeo.
+     */
+    private WebResourceResponse cleanGetPlayerResponse(String url, WebResourceRequest request) {
+        HttpURLConnection conn = null;
+        try {
+            conn = (HttpURLConnection) new URL(url).openConnection();
+            conn.setConnectTimeout(10000);
+            conn.setReadTimeout(15000);
+            conn.setInstanceFollowRedirects(true);
+            conn.setRequestMethod("GET");
+
+            Map<String, String> headers = request.getRequestHeaders();
+            if (headers != null) {
+                String ua = headers.get("User-Agent");
+                if (ua != null) conn.setRequestProperty("User-Agent", ua);
+                String ref = headers.get("Referer");
+                if (ref != null) conn.setRequestProperty("Referer", ref);
+            }
+            conn.setRequestProperty("X-Requested-With", "XMLHttpRequest");
+            conn.setRequestProperty("Accept", "*/*");
+
+            InputStream is = conn.getInputStream();
+            String html = readStream(is);
+
+            // ══ REMOVE TODOS OS IFRAMES DE ANÚNCIO ══
+            // Remove iframes com action=getAds
+            html = html.replaceAll("(?is)<iframe[^>]*action=getAds[^>]*>\\s*</iframe>", "");
+            html = html.replaceAll("(?is)<iframe[^>]*getAds[^>]*>\\s*</iframe>", "");
+            // Remove iframes vazios ou de anúncio (sem src de player real)
+            html = html.replaceAll("(?is)<iframe[^>]*src=[\"'][^\"']*(?:ads|popup|waust|propeller|popcash|monetag|adsterra)[^\"']*[\"'][^>]*>\\s*</iframe>", "");
+            // Remove scripts de anúncio inline
+            html = html.replaceAll("(?is)<script[^>]*>[^<]*(?:adsbygoogle|googletag|popunder|adsense)[^<]*</script>", "");
+
+            String ct = conn.getContentType();
+            String mime = "text/html";
+            if (ct != null) mime = ct.contains(";") ? ct.split(";")[0].trim() : ct;
+            conn.disconnect();
+            return new WebResourceResponse(mime, "utf-8",
+                new ByteArrayInputStream(html.getBytes("utf-8")));
+        } catch (Exception e) {
+            if (conn != null) conn.disconnect();
+            return null;
+        }
     }
 
     private WebResourceResponse fetchAndClean(String url, WebResourceRequest request) {
@@ -132,93 +204,66 @@ public class AdblockWebViewClient extends BridgeWebViewClient {
                 if (ref != null) conn.setRequestProperty("Referer", ref);
             }
             conn.setRequestProperty("Accept", "text/html,application/xhtml+xml");
-            conn.setRequestProperty("Accept-Language", "pt-BR,pt;q=0.9");
 
             int code = conn.getResponseCode();
             InputStream is = conn.getInputStream();
             String html = readStream(is);
 
-            // ══ DETECTA DESAFIO CLOUDFLARE → PASS-THROUGH ══
-            // Se Cloudflare bloqueou nosso fetch (bot detection),
-            // deixa o WebView carregar normalmente (ele passa no desafio).
+            // Cloudflare challenge → pass-through
             if (isCloudflareChallenge(html, code)) {
                 conn.disconnect();
-                return null; // null = pass-through
+                return null;
             }
 
-            // ══════════════════════════════════════════════
-            //  NEUTRALIZACAO COMPLETA DE ANUNCIOS
-            // ══════════════════════════════════════════════
+            // ══ NEUTRALIZACAO COMPLETA ══
 
-            // 1) REMOVE script de pop-under de cassino (waust.at)
-            //    Isto é o que causa Brazino 777, Blaze, etc.
-            html = html.replaceAll(
-                "(?is)<script[^>]*src=\"[^\"]*waust\\.at[^\"]*\"[^>]*>\\s*</script>", "");
-            html = html.replaceAll(
-                "(?is)<script[^>]*src='[^']*waust\\.at[^']*'[^>]*>\\s*</script>", "");
-            // Também remove pela forma sem protocolo (//waust.at)
-            html = html.replaceAll(
-                "(?is)<script[^>]*src=[\"']?//waust\\.at[^\"']*[\"']?[^>]*>\\s*</script>", "");
+            // 1) Remove script waust.at
+            html = html.replaceAll("(?is)<script[^>]*src=[\"']?[^\"']*waust\\.at[^\"']*[\"']?[^>]*>\\s*</script>", "");
 
-            // 2) Flag nativa adsDisabled = false -> true
-            html = html.replaceAll("(?i)(const|let|var)?\\s*adsDisabled\\s*=\\s*false",
-                                   "adsDisabled   = true");
+            // 2) adsDisabled = true
+            html = html.replaceAll("(?i)(const|let|var)?\\s*adsDisabled\\s*=\\s*false", "adsDisabled   = true");
             html = html.replaceAll("(?i)adsDisabled\\s*\\?\\s*1\\s*:\\s*0", "1");
 
-            // 3) popupAdsBooted = false -> true
-            html = html.replaceAll("(?i)(let|var)\\s+popupAdsBooted\\s*=\\s*false",
-                                   "popupAdsBooted = true");
+            // 3) popupAdsBooted = true
+            html = html.replaceAll("(?i)(let|var)\\s+popupAdsBooted\\s*=\\s*false", "popupAdsBooted = true");
 
-            // 4) Desativa bootPopupAds
+            // 4) Desativa funções de anúncio
             html = html.replaceAll("function\\s+bootPopupAds\\s*\\(", "function bootPopupAds_X_(");
-
-            // 5) Desativa bootAdsIfExternalServer
             html = html.replaceAll("function\\s+bootAdsIfExternalServer\\s*\\(", "function bootAdsIfExt_X_(");
+            html = html.replaceAll("bootPopupAds\\s*\\(", "bootPopupAds_X_(");
 
-            // 6) Neutraliza div #adBoot
+            // 5) Neutraliza #adBoot
             html = html.replace("$('#adBoot')", "$('#___no___')");
             html = html.replace("\"#adBoot\"", "\"#___no___\"");
 
-            // 7) Desativa window.open
+            // 6) Desativa window.open
             html = html.replaceAll("window\\.open\\s*=", "window.__no_open__=");
 
-            // 8) Remove chamadas diretas de bootPopupAds()
-            html = html.replaceAll("bootPopupAds\\s*\\(", "bootPopupAds_X_(");
+            // 7) CRUCIAL: Modifica loadPrincipal para filtrar anúncios da resposta AJAX!
+            //    O anúncio vem embutido na resposta de getPlayer.
+            //    Substituímos a injeção do HTML para remover iframes de anúncio.
+            html = html.replace(
+                "$('#html').html(html);",
+                "$('#html').html(html.replace(/<iframe[\\s\\S]*?getAds[\\s\\S]*?<\\/iframe>/gi,'').replace(/<iframe[\\s\\S]*?action=getAds[\\s\\S]*?<\\/iframe>/gi,''));"
+            );
 
-            // 9) Neutraliza o sistema WAU (pop-under de cassino)
+            // 8) Neutraliza sistema WAU
             html = html.replaceAll("(?i)var\\s+_wau\\s*=", "var _wau_DISABLED =");
-            html = html.replaceAll("(?i)_wau\\s*=", "_wau_DISABLED =");
-            html = html.replaceAll("WAU_small\\s*\\(", "WAU_DISABLED(");
-            html = html.replaceAll("WAU_la\\s*\\(", "WAU_DISABLED(");
-            html = html.replaceAll("WAU_cps\\s*\\(", "WAU_DISABLED(");
 
-            // 10) Injeta script anti-ad no INICIO do <head>
-            //     Roda ANTES dos scripts do fembed
+            // 9) Injeta anti-ad no <head>
             String earlyBlock = "<script>" +
                 "(function(){" +
                 "window.open=function(){return null;};" +
                 "try{Object.defineProperty(window.top,'location'," +
                 "{configurable:false,get:function(){return window.location;}," +
                 "set:function(){}});}catch(e){}" +
-                "window._wau=undefined;" +
-                "window.WAU_small=function(){};" +
-                "window.WAU_la=function(){};" +
-                "window.WAU_cps=function(){};" +
                 "var obs=new MutationObserver(function(){" +
                 "document.querySelectorAll('iframe').forEach(function(f){" +
                 "var s=(f.src||'').toLowerCase();" +
-                "if(s.indexOf('fembed')===-1&&s.indexOf('superflix')===-1&&s.indexOf('myembed')===-1){" +
-                "if(s.indexOf('ads')!==-1||s.indexOf('popup')!==-1||s.indexOf('waust')!==-1||s.indexOf('propeller')!==-1||s.indexOf('popcash')!==-1||s.indexOf('monetag')!==-1||s.indexOf('brazino')!==-1||s.indexOf('blaze')!==-1){" +
-                "f.remove();" +
-                "}}});" +
+                "if(s.indexOf('getads')!==-1||s.indexOf('waust')!==-1||s.indexOf('brazino')!==-1||s.indexOf('blaze')!==-1){" +
+                "f.remove();}});" +
                 "});" +
                 "if(document.documentElement)obs.observe(document.documentElement,{childList:true,subtree:true});" +
-                "setInterval(function(){" +
-                "document.querySelectorAll('div[style*=\"z-index\"]').forEach(function(el){" +
-                "try{var z=parseInt(el.style.zIndex||'0',10);" +
-                "if(z>100&&el.id.indexOf('player')===-1){" +
-                "if(el.tagName!=='VIDEO'&&!(el.querySelector&&el.querySelector('video')))el.remove();}}catch(e){}});" +
-                "},500);" +
                 "})();" +
                 "</script>";
             html = html.replaceFirst("(?i)<head[^>]*>", "$0" + earlyBlock);
@@ -234,20 +279,12 @@ public class AdblockWebViewClient extends BridgeWebViewClient {
         }
     }
 
-    /** Detecta se a resposta é um desafio Cloudflare (bot check) */
     private boolean isCloudflareChallenge(String html, int code) {
         if (html == null) return false;
-        // Status 403/503 = bloqueado
         if (code == 403 || code == 503) return true;
-        // Marcadores de desafio Cloudflare no HTML
         String lower = html.toLowerCase();
-        if (lower.contains("just a moment")) return true;
-        if (lower.contains("checking your browser")) return true;
-        if (lower.contains("cf-challenge")) return true;
-        if (lower.contains("challenge-platform")) return true;
-        if (lower.contains("ddos protection")) return true;
-        if (lower.contains("ray id") && lower.length() < 5000) return true;
-        return false;
+        return lower.contains("just a moment") || lower.contains("checking your browser") ||
+               lower.contains("cf-challenge") || lower.contains("challenge-platform") && lower.length() < 5000;
     }
 
     private WebResourceResponse emptyResponse() {

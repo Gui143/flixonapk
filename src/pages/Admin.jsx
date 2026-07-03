@@ -446,12 +446,14 @@ function SeasonsEditor({ content, addSeason, updateSeason, removeSeason, addEpis
 
 function Profiles() {
   const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+
   useEffect(() => {
-    supabase.from('content').select('id').limit(1).then(() => {});
-    // Busca usuários via função admin (se disponível) ou lista básica
-    supabase.rpc('list_users').then(({ data }) => {
+    // Busca usuários via função RPC (requer SQL: supabase-rpc-users.sql)
+    supabase.rpc('list_users').then(({ data, error }) => {
       if (data) setUsers(data);
-    }).catch(() => setUsers([]));
+      setLoading(false);
+    }).catch(() => setLoading(false));
   }, []);
 
   return (
@@ -459,20 +461,47 @@ function Profiles() {
       <div className="bg-flixon-card border border-flixon-border rounded-xl overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-white/5 text-flixon-muted text-left">
-            <tr><th className="px-4 py-3">E-mail</th><th className="px-4 py-3">Função</th></tr>
+            <tr>
+              <th className="px-4 py-3">E-mail</th>
+              <th className="px-4 py-3">Função</th>
+              <th className="px-4 py-3">Cadastro</th>
+              <th className="px-4 py-3">Último login</th>
+            </tr>
           </thead>
           <tbody className="divide-y divide-flixon-border">
-            {users.length === 0 ? (
-              <tr><td colSpan={2} className="px-4 py-6 text-flixon-muted text-center">Lista de usuários requer função RPC no Supabase.</td></tr>
+            {loading ? (
+              <tr><td colSpan={4} className="px-4 py-6 text-flixon-muted text-center">Carregando usuários...</td></tr>
+            ) : users.length === 0 ? (
+              <tr><td colSpan={4} className="px-4 py-6 text-flixon-muted text-center">
+                Nenhum usuário ou RPC não configurado.<br/>
+                <span className="text-xs">Rode o arquivo <code className="text-flixon-violet-light">supabase-rpc-users.sql</code> no SQL Editor.</span>
+              </td></tr>
             ) : users.map((u, i) => (
               <tr key={i}>
                 <td className="px-4 py-3 font-medium">{sanitizeText(u.email)}</td>
-                <td className="px-4 py-3">{u.email === ADMIN_EMAIL ? <span className="text-flixon-violet-light font-semibold">Admin</span> : <span className="text-flixon-muted">Usuário</span>}</td>
+                <td className="px-4 py-3">
+                  {u.is_admin || u.email === ADMIN_EMAIL ? (
+                    <span className="text-flixon-violet-light font-semibold">Admin</span>
+                  ) : (
+                    <span className="text-flixon-muted">Usuário</span>
+                  )}
+                </td>
+                <td className="px-4 py-3 text-flixon-muted">
+                  {u.created_at ? new Date(u.created_at).toLocaleDateString('pt-BR') : '—'}
+                </td>
+                <td className="px-4 py-3 text-flixon-muted">
+                  {u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString('pt-BR') : '—'}
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      {users.length > 0 && (
+        <p className="text-flixon-muted text-xs mt-3">
+          {users.length} usuário(s) cadastrado(s) • Senhas nunca exibidas (hash no Supabase Auth)
+        </p>
+      )}
     </div>
   );
 }
