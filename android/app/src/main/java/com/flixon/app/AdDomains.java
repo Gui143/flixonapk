@@ -47,7 +47,15 @@ public class AdDomains {
         "greenredigreen.com", "graphtie.com", "strigops.com",
         // ── Cassino / apostas (tigrinho e similares) ──
         "monetag.com", "profitabledisplaynetwork.com",
-        "pubpower.com", "displaynetworksolutions.com"
+        "pubpower.com", "displaynetworksolutions.com",
+        // ── Scam de roleta / prêmio (popunder do fembed) ──
+        "waust.at", "alphonso.tv", "betwey.com",
+        "astonishinginspiring.com", "clueff.com", "pushwoosh.com",
+        "onesignal.com", "cleantalk.org", "promonexp.com",
+        "greatlyincentive.com", "subsequentail.com",
+        "grandomere.com", "grileepo.com",
+        // Redes de scam/popunder adicionais
+        "admaven.com", "alphonso.com"
     ));
 
     // ── Palavras-chave na URL completa (pega domínios rotativos) ──

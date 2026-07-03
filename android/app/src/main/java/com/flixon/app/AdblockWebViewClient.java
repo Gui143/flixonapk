@@ -6,41 +6,51 @@ import com.getcapacitor.BridgeWebViewClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
+import java.io.ByteArrayInputStream;
 
 /**
- * WebViewClient que estende o do Capacitor.
+ * WebViewClient que estende o do Capacitor e replica o adblock do PC.
  *
- * ESTRATÉGIA MÍNIMA E SEGURA (não quebra o player):
+ * Esta é a versão EQUIVALENTE ao session.webRequest.onBeforeRequest do Electron:
  *
- *  shouldInterceptRequest  → PASS-THROUGH (não bloqueia nada).
- *    Motivo: bloquear recursos quebrava players como o fembed (loading infinito).
- *    O player precisa carregar TODOS os seus scripts/CDN para funcionar.
+ *  shouldInterceptRequest → bloqueia por DOMÍNIO (isAdHost).
+ *    Intercepta TODAS as requisições, inclusive de iframes cross-origin
+ *    (fembed, etc.). Os scripts de anúncio/scam (propellerads, adsterra,
+ *    popcash...) nunca carregam → sem popup de roleta/scam.
+ *    NUNCA usa palavra-chave aqui (quebraria o player fembed).
  *
- *  shouldOverrideUrlLoading → BLOQUEIA só URLs de anúncio/cassino (tigrinho).
- *    É aqui que o "tigrinho" é pego: ele tenta navegar pra uma URL de cassino,
- *    e nós bloqueamos (return true), impedindo que o app saia para o anúncio.
- *
- *  Popups → bloqueados via setSupportMultipleWindows(false) no MainActivity.
+ *  shouldOverrideUrlLoading → bloqueia por DOMÍNIO e PALAVRA-CHAVE.
+ *    Pega o tigrinho e scams com domínios rotativos.
  */
 public class AdblockWebViewClient extends BridgeWebViewClient {
+
+    private static final WebResourceResponse EMPTY =
+        new WebResourceResponse("text/plain", "utf-8", new ByteArrayInputStream(new byte[0]));
 
     public AdblockWebViewClient(Bridge bridge) {
         super(bridge);
     }
 
     // ═══════════════════════════════════════════
-    //  RECURSOS: PASS-THROW TOTAL.
-    //  Não bloqueamos NADA aqui para garantir que o player carregue.
+    //  RECURSOS: bloqueia por DOMÍNIO apenas (igual o PC).
+    //  Intercepta todos os frames, inclusive iframes do fembed.
+    //  Cancela redes de anúncio/scam ANTES de carregar.
     // ═══════════════════════════════════════════
     @Override
     public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-        // Deixa o Capacitor tratar normalmente (serve os arquivos locais do app)
+        String host = null;
+        if (request != null && request.getUrl() != null) {
+            host = request.getUrl().getHost();
+        }
+        if (AdDomains.isAdHost(host)) {
+            return EMPTY;
+        }
         return super.shouldInterceptRequest(view, request);
     }
 
     // ═══════════════════════════════════════════
-    //  NAVEGAÇÃO: bloqueia anúncios/cassino (tigrinho) por DOMÍNIO e PALAVRA-CHAVE.
-    //  Isto impede que o app saia para a tela do anúncio.
+    //  NAVEGAÇÃO: bloqueia anúncios/scams por DOMÍNIO e PALAVRA-CHAVE.
+    //  Impede que o app saia para a tela do anúncio (tigrinho).
     // ═══════════════════════════════════════════
     @Override
     public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
@@ -48,9 +58,8 @@ public class AdblockWebViewClient extends BridgeWebViewClient {
         if (request != null && request.getUrl() != null) {
             url = request.getUrl().toString();
         }
-        // Se é anúncio/cassino → BLOQUEIA a navegação
         if (AdDomains.isAdUrl(url)) {
-            return true;  // true = não navega
+            return true;
         }
         return super.shouldOverrideUrlLoading(view, request);
     }
