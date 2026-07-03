@@ -1,0 +1,100 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    background: #0a0a0a;
+    color: #ffffff;
+    font-family: 'Inter', 'Poppins', 'Segoe UI', system-ui, sans-serif;
+    overflow: hidden; /* Electron: scroll gerenciado dentro do app */
+    user-select: none;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  input,
+  textarea,
+  [contenteditable] {
+    user-select: text;
+  }
+}
+
+@layer utilities {
+  .titlebar-drag {
+    -webkit-app-region: drag;
+  }
+  .no-drag {
+    -webkit-app-region: no-drag;
+  }
+  .text-shadow-hero {
+    text-shadow: 0 2px 20px rgba(0, 0, 0, 0.8);
+  }
+}
+
+/* Scrollbar customizada */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a2a2a;
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3a3a3a;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Range do player */
+input[type='range'].flix-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.25);
+  cursor: pointer;
+}
+input[type='range'].flix-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #7c3aed;
+  box-shadow: 0 0 8px rgba(124, 58, 237, 0.8);
+}
+
+/* ── Ajustes para Mobile (Android/APK) ──
+   Só afetam telas estreitas; a versão de PC (>=768px) é idêntica. */
+@media (max-width: 767px) {
+  /* Reduz padding lateral das páginas para mais espaço útil */
+  .h-full.overflow-y-auto {
+    padding-left: 1rem;
+    padding-right: 1rem;
+    padding-top: 1.5rem;
+  }
+  /* Hero mais baixo no mobile */
+  .h-\[58vh\] {
+    height: 42vh !important;
+    min-height: 280px !important;
+  }
+  /* Alvos de toque um pouco maiores */
+  button {
+    min-height: 36px;
+  }
+}

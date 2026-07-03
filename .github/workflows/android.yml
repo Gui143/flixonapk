@@ -1,0 +1,127 @@
+# ═══════════════════════════════════════════════════════════
+#  FlixOn — Build APK na nuvem (GitHub Actions)
+#
+#  Compila o APK de debug e release nos servidores gratuitos do GitHub.
+#  Você NÃO precisa instalar Android Studio/SDK/Gradle no seu PC.
+# ═══════════════════════════════════════════════════════════
+name: 📱 Build Android APK
+
+"on":
+  # Dispara ao dar push na branch main/master
+  push:
+    branches: [main, master]
+  # Dispara quando criar uma tag (ex: v1.0.0) — publica na aba Releases
+  create:
+    tags: ['v*']
+  # Dispara MANUALMENTE (botão "Run workflow" na aba Actions)
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Compilar APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # ── 1. Baixa o código ──
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      # ── 2. Instala Node.js 20 (necessário p/ SDK do plugin-legacy) ──
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      # ── 3. Instala Java 17 (necessário pro Gradle/Android) ──
+      - name: ☕ Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: 17
+
+      # ── 4. Configura Android SDK ──
+      - name: 🤖 Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
+
+      # ── 5. Instala dependências do projeto (legacy-peer-deps p/ plugin-legacy) ──
+      - name: 📚 npm install
+        run: npm install --legacy-peer-deps
+
+      # ── 6. Compila a interface React (Vite build) ──
+      - name: 🔨 Build Web
+        run: npm run build
+
+      # ── 7. Sincroniza com o projeto Android (Capacitor) ──
+      - name: 🔄 Capacitor Sync
+        run: npx cap sync android
+
+      # ── 8. Cache do Gradle (acelera builds futuros) ──
+      - name: 💾 Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle', 'android/**/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      # ── 9. Dá permissão de execução ao Gradlew ──
+      - name: 🔑 Permitir execução do Gradlew
+        working-directory: android
+        run: chmod +x gradlew
+
+      # ── 10. Compila o APK de DEBUG ──
+      - name: 🏗️ Build APK Debug
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon -x lint
+
+      # ── 11. Compila o APK de RELEASE ──
+      - name: 🚀 Build APK Release
+        working-directory: android
+        run: ./gradlew assembleRelease --no-daemon -x lint
+
+      # ── 12. Assina o APK de release (debug-key temporária) ──
+      - name: 🔏 Assinar APK Release
+        working-directory: android
+        run: |
+          keytool -genkey -v -keystore flixon-release.keystore \
+            -alias flixon -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass flixon123 -keypass flixon123 \
+            -dname "CN=FlixOn, OU=App, O=FlixOn, L=BR, S=BR, C=BR"
+          APK=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
+          echo "Assinando: $APK"
+          cp "$APK" app/build/outputs/apk/release/FlixOn-release.apk
+          $ANDROID_HOME/build-tools/34.0.0/apksigner sign \
+            --ks flixon-release.keystore --ks-pass pass:flixon123 \
+            --key-pass pass:flixon123 --v1-signing-enabled true --v2-signing-enabled true \
+            app/build/outputs/apk/release/FlixOn-release.apk
+
+      # ── 13. Upload do APK de DEBUG ──
+      - name: 📤 Upload APK Debug
+        uses: actions/upload-artifact@v4
+        with:
+          name: FlixOn-debug
+          path: android/app/build/outputs/apk/debug/*.apk
+          retention-days: 30
+
+      # ── 14. Upload do APK de RELEASE ──
+      - name: 📤 Upload APK Release
+        uses: actions/upload-artifact@v4
+        with:
+          name: FlixOn-release
+          path: android/app/build/outputs/apk/release/FlixOn-release.apk
+          retention-days: 30
+
+      # ── 15. Publica na aba Releases (apenas ao criar uma tag v*) ──
+      - name: 🎉 Publicar Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: android/app/build/outputs/apk/release/FlixOn-release.apk
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

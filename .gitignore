@@ -1,0 +1,42 @@
+# Dependências
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs (gerados na nuvem, não no repo)
+dist/
+release/
+android/app/build/
+android/.gradle/
+android/build/
+android/captures/
+android/local.properties
+*.apk
+*.aab
+*.keystore
+*.jks
+
+# Ambient / secrets
+.env
+.env.local
+.env.*.local
+
+# Editor / SO
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Capacitor
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/capacitor.build.gradle
+
+# Supabase local
+supabase/.temp/
+supabase/.branches/
