@@ -5,11 +5,13 @@ import App from './App';
 import { AuthProvider } from './context/AuthContext';
 import { ProfileProvider } from './context/ProfileContext';
 import { AppDataProvider } from './context/AppDataContext';
-import { initMobileAdblock } from './lib/mobileAdblock';
 import './index.css';
 
-// Inicializa o adblock mobile (no-op no Electron, ativo no Android)
-initMobileAdblock();
+// NOTA: o adblock do mobile agora é 100% nativo (Java):
+//  - shouldInterceptRequest: pass-through (não quebra o player)
+//  - shouldOverrideUrlLoading: bloqueia tigrinho/cassino
+//  - setSupportMultipleWindows(false): bloqueia popups
+// A injeção de JS foi REMOVIDA (podia quebrar o Capacitor).
 
 createRoot(document.getElementById('root')).render(
   <React.StrictMode>
