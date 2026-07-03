@@ -14,16 +14,17 @@ import java.net.URL;
 import java.util.Map;
 
 /**
- * WebViewClient — Adblock DEFINITIVO para players de embed (fembed + mirrors).
+ * Adblock para players de embed (fembed + mirrors).
  *
- * DUAS camadas de bloqueio:
+ * ESTRATÉGIA SEGURA (não quebra o player):
  *
  * 1) shouldInterceptRequest:
- *    a) Bloqueia api.php?action=getAds (o iframe de anúncio do fembed)
- *    b) Bloqueia scripts de pop-under (waust.at, popads, etc.)
- *    c) Modifica HTML de páginas /e/ para filtrar anúncios da resposta AJAX
+ *    a) BLOQUEIA api.php?action=getAds → retorna vazio (anúncio não carrega)
+ *    b) BLOQUEIA scripts de pop-under (waust.at, etc.)
+ *    c) Modifica HTML da página /e/ (adsDisabled=true, bootPopupAds off)
+ *    NÃO intercepta getPlayer — deixa o WebView carregar com seus cookies/POST.
  *
- * 2) shouldOverrideUrlLoading: bloqueia navegação para cassinos/scams
+ * 2) shouldOverrideUrlLoading: bloqueia navegação para cassinos/scams.
  */
 public class AdblockWebViewClient extends BridgeWebViewClient {
 
@@ -47,21 +48,12 @@ public class AdblockWebViewClient extends BridgeWebViewClient {
         if (url == null) return super.shouldInterceptRequest(view, request);
         String lower = url.toLowerCase();
 
-        // ══ A) BLOQUEIA api.php?action=getAds (anúncio do fembed) ══
-        // Esta é a URL do iframe de anúncio injetado na resposta de getPlayer
-        if (lower.contains("action=getads") || lower.contains("action=getplayer")) {
-            // getPlayer retorna HTML com o player + iframe de getAds
-            // Vamos limpar a resposta em vez de bloquear
-            if (lower.contains("action=getplayer") && isFembedApi(url)) {
-                try {
-                    WebResourceResponse cleaned = cleanGetPlayerResponse(url, request);
-                    if (cleaned != null) return cleaned;
-                } catch (Exception e) {}
-            }
-            // getAds → bloqueia totalmente (retorna vazio)
-            if (lower.contains("action=getads")) {
-                return emptyResponse();
-            }
+        // ══ A) BLOQUEIA api.php?action=getAds (anúncio) ══
+        // O fembed injeta um iframe com action=getAds na resposta de getPlayer.
+        // Bloqueamos essa URL → o iframe fica vazio → sem anúncio.
+        // NÃO bloqueamos getPlayer (deixamos o player carregar normalmente).
+        if (lower.contains("action=getads")) {
+            return emptyResponse();
         }
 
         // ══ B) Bloqueia scripts de pop-under de cassino ══
@@ -69,7 +61,7 @@ public class AdblockWebViewClient extends BridgeWebViewClient {
             return emptyResponse();
         }
 
-        // ══ C) Modifica HTML de páginas de embed ══
+        // ══ C) Modifica HTML da página de embed ══
         if (isEmbedPage(url)) {
             try {
                 WebResourceResponse mod = fetchAndClean(url, request);
@@ -111,15 +103,6 @@ public class AdblockWebViewClient extends BridgeWebViewClient {
 
     // ─── HELPERS ───
 
-    private boolean isFembedApi(String url) {
-        String lower = url.toLowerCase();
-        if (lower.contains("fembed")) return true;
-        for (String h : EMBED_HOSTS) {
-            if (lower.contains(h)) return true;
-        }
-        return false;
-    }
-
     private boolean isPopunderScript(String url) {
         String lower = url.toLowerCase();
         return lower.contains("waust.at") || lower.contains("waust.") ||
@@ -138,54 +121,6 @@ public class AdblockWebViewClient extends BridgeWebViewClient {
             if (lower.contains(host)) return true;
         }
         return lower.contains("fembed");
-    }
-
-    /**
-     * Limpa a resposta de api.php?action=getPlayer.
-     * Remove TODOS os iframes de anúncio (getAds) do HTML retornado.
-     * Mantém apenas o player de vídeo.
-     */
-    private WebResourceResponse cleanGetPlayerResponse(String url, WebResourceRequest request) {
-        HttpURLConnection conn = null;
-        try {
-            conn = (HttpURLConnection) new URL(url).openConnection();
-            conn.setConnectTimeout(10000);
-            conn.setReadTimeout(15000);
-            conn.setInstanceFollowRedirects(true);
-            conn.setRequestMethod("GET");
-
-            Map<String, String> headers = request.getRequestHeaders();
-            if (headers != null) {
-                String ua = headers.get("User-Agent");
-                if (ua != null) conn.setRequestProperty("User-Agent", ua);
-                String ref = headers.get("Referer");
-                if (ref != null) conn.setRequestProperty("Referer", ref);
-            }
-            conn.setRequestProperty("X-Requested-With", "XMLHttpRequest");
-            conn.setRequestProperty("Accept", "*/*");
-
-            InputStream is = conn.getInputStream();
-            String html = readStream(is);
-
-            // ══ REMOVE TODOS OS IFRAMES DE ANÚNCIO ══
-            // Remove iframes com action=getAds
-            html = html.replaceAll("(?is)<iframe[^>]*action=getAds[^>]*>\\s*</iframe>", "");
-            html = html.replaceAll("(?is)<iframe[^>]*getAds[^>]*>\\s*</iframe>", "");
-            // Remove iframes vazios ou de anúncio (sem src de player real)
-            html = html.replaceAll("(?is)<iframe[^>]*src=[\"'][^\"']*(?:ads|popup|waust|propeller|popcash|monetag|adsterra)[^\"']*[\"'][^>]*>\\s*</iframe>", "");
-            // Remove scripts de anúncio inline
-            html = html.replaceAll("(?is)<script[^>]*>[^<]*(?:adsbygoogle|googletag|popunder|adsense)[^<]*</script>", "");
-
-            String ct = conn.getContentType();
-            String mime = "text/html";
-            if (ct != null) mime = ct.contains(";") ? ct.split(";")[0].trim() : ct;
-            conn.disconnect();
-            return new WebResourceResponse(mime, "utf-8",
-                new ByteArrayInputStream(html.getBytes("utf-8")));
-        } catch (Exception e) {
-            if (conn != null) conn.disconnect();
-            return null;
-        }
     }
 
     private WebResourceResponse fetchAndClean(String url, WebResourceRequest request) {
@@ -209,22 +144,22 @@ public class AdblockWebViewClient extends BridgeWebViewClient {
             InputStream is = conn.getInputStream();
             String html = readStream(is);
 
-            // Cloudflare challenge → pass-through
+            // Cloudflare challenge → pass-through (não interfere)
             if (isCloudflareChallenge(html, code)) {
                 conn.disconnect();
                 return null;
             }
 
-            // ══ NEUTRALIZACAO COMPLETA ══
+            // ══ NEUTRALIZAÇÃO DE ANÚNCIOS (sem tocar no player) ══
 
-            // 1) Remove script waust.at
+            // 1) Remove script waust.at (pop-under de cassino)
             html = html.replaceAll("(?is)<script[^>]*src=[\"']?[^\"']*waust\\.at[^\"']*[\"']?[^>]*>\\s*</script>", "");
 
-            // 2) adsDisabled = true
+            // 2) adsDisabled = true (flag nativa)
             html = html.replaceAll("(?i)(const|let|var)?\\s*adsDisabled\\s*=\\s*false", "adsDisabled   = true");
             html = html.replaceAll("(?i)adsDisabled\\s*\\?\\s*1\\s*:\\s*0", "1");
 
-            // 3) popupAdsBooted = true
+            // 3) popupAdsBooted = true (não bootar de novo)
             html = html.replaceAll("(?i)(let|var)\\s+popupAdsBooted\\s*=\\s*false", "popupAdsBooted = true");
 
             // 4) Desativa funções de anúncio
@@ -239,18 +174,10 @@ public class AdblockWebViewClient extends BridgeWebViewClient {
             // 6) Desativa window.open
             html = html.replaceAll("window\\.open\\s*=", "window.__no_open__=");
 
-            // 7) CRUCIAL: Modifica loadPrincipal para filtrar anúncios da resposta AJAX!
-            //    O anúncio vem embutido na resposta de getPlayer.
-            //    Substituímos a injeção do HTML para remover iframes de anúncio.
-            html = html.replace(
-                "$('#html').html(html);",
-                "$('#html').html(html.replace(/<iframe[\\s\\S]*?getAds[\\s\\S]*?<\\/iframe>/gi,'').replace(/<iframe[\\s\\S]*?action=getAds[\\s\\S]*?<\\/iframe>/gi,''));"
-            );
-
-            // 8) Neutraliza sistema WAU
+            // 7) Neutraliza sistema WAU (pop-under)
             html = html.replaceAll("(?i)var\\s+_wau\\s*=", "var _wau_DISABLED =");
 
-            // 9) Injeta anti-ad no <head>
+            // 8) Injeta anti-ad no <head>
             String earlyBlock = "<script>" +
                 "(function(){" +
                 "window.open=function(){return null;};" +
@@ -284,7 +211,8 @@ public class AdblockWebViewClient extends BridgeWebViewClient {
         if (code == 403 || code == 503) return true;
         String lower = html.toLowerCase();
         return lower.contains("just a moment") || lower.contains("checking your browser") ||
-               lower.contains("cf-challenge") || lower.contains("challenge-platform") && lower.length() < 5000;
+               lower.contains("cf-challenge") ||
+               (lower.contains("challenge-platform") && lower.length() < 5000);
     }
 
     private WebResourceResponse emptyResponse() {
