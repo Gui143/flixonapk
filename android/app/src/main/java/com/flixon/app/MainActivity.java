@@ -16,7 +16,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Fundo preto imersivo (antes do WebView carregar)
+        // Fundo preto imersivo
         try {
             Window window = getWindow();
             window.setStatusBarColor(Color.parseColor("#0a0a0a"));
@@ -24,17 +24,11 @@ public class MainActivity extends BridgeActivity {
             window.getDecorView().setSystemUiVisibility(
                 View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
             );
-        } catch (Exception e) { /* noop */ }
+        } catch (Exception e) {}
 
-        // Instala o bloqueador de anúncios e bloqueio de popups nativos
         installAdblock();
     }
 
-    /**
-     * Instala o AdblockWebViewClient no WebView do Capacitor.
-     * Este é o equivalente Android do session.webRequest do Electron.
-     * Intercepta TODAS as requisições (inclusive dentro de iframes cross-origin).
-     */
     private void installAdblock() {
         try {
             Bridge bridge = this.bridge;
@@ -44,30 +38,30 @@ public class MainActivity extends BridgeActivity {
 
             WebSettings settings = webView.getSettings();
 
-            // Performance e compatibilidade
+            // Performance
             settings.setDomStorageEnabled(true);
             settings.setJavaScriptEnabled(true);
             settings.setMediaPlaybackRequiresUserGesture(false);
             settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
             settings.setCacheMode(WebSettings.LOAD_DEFAULT);
 
-            // 1) ADBLOCK NATIVO: intercepta e cancela requisições de anúncios
-            //    (funciona inclusive dentro de iframes cross-origin: fembed, etc.)
+            // ══ 1) ADBLOCK NATIVO + BLOQUEIO DE NAVEGAÇÃO ══
+            // Intercepta anúncios na rede (shouldInterceptRequest)
+            // E bloqueia navegação para URLs de anúncio (shouldOverrideUrlLoading)
+            // → Impede o "tigrinho" de abrir/abandonar o app
             webView.setWebViewClient(new AdblockWebViewClient(bridge));
 
-            // 2) BLOQUEIO DE POPUPS: com supportMultipleWindows=false,
-            //    window.open() do JS não cria janela nova => sem anúncios em popup
+            // ══ 2) BLOQUEIO DE POPUPS ══
+            // supportMultipleWindows=false => window.open() retorna null
+            // → Nenhum popup de anúncio abre
             settings.setSupportMultipleWindows(false);
             settings.setJavaScriptCanOpenWindowsAutomatically(false);
-        } catch (Exception e) {
-            // Se falhar, o app continua funcionando (sem adblock)
-        }
+        } catch (Exception e) {}
     }
 
     @Override
     public void onResume() {
         super.onResume();
-        // Re-garante o adblock ao voltar para o app
         try {
             if (this.bridge != null && this.bridge.getWebView() != null) {
                 WebView wv = this.bridge.getWebView();
@@ -75,6 +69,6 @@ public class MainActivity extends BridgeActivity {
                     wv.setWebViewClient(new AdblockWebViewClient(this.bridge));
                 }
             }
-        } catch (Exception e) { /* noop */ }
+        } catch (Exception e) {}
     }
 }

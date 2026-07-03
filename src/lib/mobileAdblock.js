@@ -1,24 +1,55 @@
 // ─────────────────────────────────────────────────────────────
-//  Adblock para Mobile (Android WebView / TV Box)
+//  Adblock Mobile (camada JS — complementa o nativo)
 //
-//  No Electron usamos session.webRequest (processo principal).
-//  No WebView do Android isso não existe, então injetamos JS que:
-//   1) Intercepta fetch() e XMLHttpRequest bloqueando domínios de anúncio
-//   2) Remove overlays/banners de anúncio via MutationObserver
-//   3) Neutraliza window.open (popups/pop-under)
+//  O nativo (Java shouldInterceptRequest + shouldOverrideUrlLoading)
+//  bloqueia a rede. Este módulo remove overlays de anúncio que já
+//  foram injetados no DOM e neutraliza redirecionamentos de clique.
 // ─────────────────────────────────────────────────────────────
 import { AD_DOMAINS } from '../lib/adblockList';
 
-// Script injetado no documento principal e nos iframes de embed.
-// Roda cedo (antes dos scripts de anúncio carregarem).
+// Seletores CSS de overlays de anúncio comuns (inclui cassino/tigrinho)
+const AD_CSS_SELECTORS = [
+  // Banners e overlays típicos
+  '[id*="banner"]', '[id*="ad-"]', '[id*="ads"]', '[id*="popup"]',
+  '[id*="overlay"]', '[id*="advert"]', '[id*="promo"]', '[id*="modal"]',
+  '[class*="banner"]', '[class*="advert"]', '[class*="promo"]',
+  '[class*="overlay-ad"]', '[class*="popup"]',
+  'ins.adsbygoogle',
+  'div[style*="z-index: 2147483647"]',
+  'div[style*="position: fixed"][style*="top: 0"]',
+  // Iframes de anúncio
+  'iframe[src*="doubleclick"]', 'iframe[src*="googlesyndication"]',
+  'iframe[src*="taboola"]', 'iframe[src*="outbrain"]',
+  'iframe[src*="popads"]', 'iframe[src*="propeller"]',
+  // Cassino / tigrinho
+  'iframe[src*="fortune"]', 'iframe[src*="tiger"]', 'iframe[src*="casino"]',
+  'div[class*="casino"]', 'div[id*="fortune"]', 'div[id*="tiger"]',
+  '[class*="tigrinho"]', '[id*="tigrinho"]',
+  // Ads genéricos de players
+  'div[id*="vast"]', 'div[class*="vast"]',
+  'div[id*="preroll"]', 'div[class*="preroll"]'
+];
+
 export const MOBILE_ADBLOCK_SCRIPT = `
 (function () {
   try {
     var AD = ${JSON.stringify(AD_DOMAINS)};
+    var KEYWORDS = [
+      'fortune-tiger', 'fortunetiger', 'fortune_tiger', 'fortune.tiger',
+      'tigrinho', 'jogo-do-tigre', 'tiger-fortune', 'lucky-tiger',
+      'fortune-rabbit', 'fortune-mouse', 'fortune-ox', 'fortune-dragon',
+      'cassino', 'casino-online', 'apostas', 'crash-game', 'aviator',
+      'popunder', 'pop-under', 'adclick', 'monetag', 'propellerads',
+      'adcash', 'adsterra', 'popads', 'hilltopads', 'adskeeper'
+    ];
+
     function isAd(url) {
-      try { var h = new URL(url).hostname.toLowerCase(); }
-      catch (e) { return false; }
-      return AD.some(function (d) { return h === d || h.indexOf('.' + d) === h.length - d.length - 1; });
+      if (!url) return false;
+      var u = url.toLowerCase();
+      try { var h = new URL(url).hostname.toLowerCase();
+        if (AD.some(function (d) { return h === d || h.indexOf('.' + d) === h.length - d.length - 1; })) return true;
+      } catch (e) {}
+      return KEYWORDS.some(function (k) { return u.indexOf(k) !== -1; });
     }
 
     // 1) Intercepta fetch()
@@ -41,62 +72,55 @@ export const MOBILE_ADBLOCK_SCRIPT = `
       };
       var origSend = OrigXHR.prototype.send;
       OrigXHR.prototype.send = function () {
-        if (this._blocked) { return; }
+        if (this._blocked) return;
         return origSend.apply(this, arguments);
       };
     }
 
-    // 3) Neutraliza window.open (popups/pop-under)
+    // 3) Neutraliza window.open
     window.open = function () { return null; };
 
-    // 4) Intercepta criação de <iframe>, <script>, <img> de anúncio
-    function blockNode(node) {
-      if (!node || node.nodeType !== 1) return;
-      var url = node.src || node.href || node.data || '';
-      if (url && isAd(url)) {
-        node.remove ? node.remove() : (node.parentNode && node.parentNode.removeChild(node));
-        return;
-      }
-    }
-    var observer = new MutationObserver(function (mutations) {
-      mutations.forEach(function (m) {
-        m.addedNodes.forEach(blockNode);
+    // 4) Bloqueia top.location redirect (o player tenta redirecionar o app)
+    try {
+      var origTopLocation = window.top.location;
+      Object.defineProperty(window.top, 'location', {
+        configurable: false,
+        get: function () { return origTopLocation; },
+        set: function () { /* BLOQUEADO */ }
       });
-    });
-    if (document.documentElement) {
-      observer.observe(document.documentElement, { childList: true, subtree: true });
-    }
+    } catch (e) {}
 
-    // 5) Remove overlays/banners de anúncio típicos
+    // 5) Remove overlays/banners de anúncio continuamente
+    var AD_SEL = ${JSON.stringify(AD_CSS_SELECTORS)};
     function removeAds() {
       try {
-        var sels = [
-          '[id*="banner"]', '[id*="ad-"]', '[id*="ads"]', '[id*="popup"]',
-          '[class*="banner"]', '[class*="advert"]', '[class*="promo"]',
-          '[class*="overlay"]', 'ins.adsbygoogle',
-          'iframe[src*="doubleclick"]', 'iframe[src*="googlesyndication"]',
-          'iframe[src*="taboola"]', 'iframe[src*="outbrain"]',
-          'div[style*="z-index: 2147483647"]'
-        ];
-        sels.forEach(function (sel) {
-          try {
-            document.querySelectorAll(sel).forEach(function (el) {
-              if (el && el.parentNode) el.parentNode.removeChild(el);
-            });
-          } catch (e) {}
+        AD_SEL.forEach(function (sel) {
+          document.querySelectorAll(sel).forEach(function (el) {
+            // Não remove o próprio player de vídeo!
+            if (el.tagName === 'VIDEO' || el.querySelector('video')) return;
+            if (el.parentNode) el.parentNode.removeChild(el);
+          });
+        });
+        // Remove iframes de anúncio por src
+        document.querySelectorAll('iframe').forEach(function (iframe) {
+          if (isAd(iframe.src)) {
+            if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+          }
         });
       } catch (e) {}
     }
     removeAds();
-    setInterval(removeAds, 1500);
+    var observer = new MutationObserver(function () { removeAds(); });
+    if (document.documentElement) {
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+    }
+    setInterval(removeAds, 1000);
   } catch (e) {}
 })();
 `;
 
-// Inicializa o adblock mobile no documento principal.
-// No Electron, o adblock já roda no processo principal (este é no-op).
+// Inicializa no documento principal (apenas mobile)
 export function initMobileAdblock() {
-  // Só injeta em ambiente mobile (Capacitor/WebView)
   const cap = typeof window !== 'undefined' ? window.Capacitor : undefined;
   const isMobile =
     !!(cap && cap.isNativePlatform && cap.isNativePlatform()) ||
@@ -104,22 +128,20 @@ export function initMobileAdblock() {
 
   if (!isMobile) return;
 
-  // Injeta imediatamente (cabeça do documento)
+  // Injeta no documento principal
   try {
     const script = document.createElement('script');
     script.textContent = MOBILE_ADBLOCK_SCRIPT;
     (document.head || document.documentElement).appendChild(script);
     script.remove();
-  } catch (e) {
-    /* noop */
-  }
+  } catch (e) {}
 
-  // Re-injeta nos iframes de embed quando carregam
+  // Re-injeta nos iframes quando carregam (se for same-origin)
   const injectIntoIframes = () => {
     try {
       document.querySelectorAll('iframe').forEach((iframe) => {
         try {
-          if (iframe.contentWindow) {
+          if (iframe.contentWindow && iframe.contentWindow.document) {
             const s = iframe.contentWindow.document.createElement('script');
             s.textContent = MOBILE_ADBLOCK_SCRIPT;
             (iframe.contentWindow.document.head ||
@@ -127,13 +149,12 @@ export function initMobileAdblock() {
             s.remove();
           }
         } catch (e) {
-          /* iframe cross-origin — não conseguimos injetar */
+          /* cross-origin — o bloqueio nativo (Java) cuida */
         }
       });
     } catch (e) {}
   };
 
-  // Observa novos iframes
   const observer = new MutationObserver(() => injectIntoIframes());
   if (document.body) observer.observe(document.body, { childList: true, subtree: true });
   setInterval(injectIntoIframes, 2000);
