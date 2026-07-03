@@ -27,7 +27,7 @@ export default function VideoPlayer({ src, title, poster, type, id, episodeId })
   const [live, setLive] = useState(false);
 
   // Configura HLS para streams .m3u8 (canais ao vivo)
-  // OTIMIZADO P/ TV BOX: Web Workers desativados + buffer limitado
+  // OTIMIZADO P/ TV BOX: configs agressivas para hardware fraco
   useEffect(() => {
     const v = vref.current;
     if (!v || !src) return;
@@ -36,9 +36,19 @@ export default function VideoPlayer({ src, title, poster, type, id, episodeId })
     if (isHls(src)) {
       if (Hls.isSupported()) {
         const hls = new Hls({
-          maxBufferSize: 0,        // desativa limite pesado baseado em tamanho
-          maxBufferLength: 10,     // limita buffer em 10s para aliviar a RAM
-          enableWorker: false      // CRUCIAL: Web Workers travam CPU de TV Box
+          maxBufferSize: 0,           // sem limite pesado por tamanho
+          maxBufferLength: 10,        // buffer de no máx 10s (alivia RAM)
+          maxMaxBufferLength: 15,     // nunca passa de 15s
+          enableWorker: false,        // CRUCIAL: Web Workers travam TV Box
+          lowLatencyMode: false,      // desativa modo low latency (consome + CPU)
+          backBufferLength: 5,        // limpa buffer antigo (5s pra trás)
+          maxBufferHole: 0.5,         // tolerância menor pra lacunas
+          startLevel: -1,             // auto: começa com qualidade baixa
+          capLevelToPlayerSize: true, // qualidade = tamanho do player
+          abrEwmaDefaultEstimate: 500000,  // estimate de banda conservador
+          startFragPrefetch: false,
+          manifestLoadingTimeOut: 20000,
+          manifestLoadingMaxRetry: 3
         });
         hlsRef.current = hls;
         hls.loadSource(src);
@@ -49,7 +59,7 @@ export default function VideoPlayer({ src, title, poster, type, id, episodeId })
         });
         cleanup = () => hls.destroy();
       } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
-        // Safari nativo
+        // Safari nativo / WebView com suporte HLS nativo
         v.src = src;
         setLive(true);
       }
@@ -154,9 +164,10 @@ export default function VideoPlayer({ src, title, poster, type, id, episodeId })
       {/* Barra superior */}
       <div
         className={
-          'absolute top-0 inset-x-0 p-4 flex items-center justify-between bg-gradient-to-b from-black/70 to-transparent transition-opacity duration-300 ' +
+          'absolute top-0 inset-x-0 p-4 flex items-center justify-between transition-opacity duration-300 ' +
           (showControls ? 'opacity-100' : 'opacity-0 pointer-events-none')
         }
+        style={{ backgroundColor: 'rgba(0,0,0,0.85)' }}
       >
         <button
           onClick={() => nav(-1)}
@@ -174,9 +185,10 @@ export default function VideoPlayer({ src, title, poster, type, id, episodeId })
       {/* Controles inferiores */}
       <div
         className={
-          'absolute bottom-0 inset-x-0 px-4 pb-4 pt-10 bg-gradient-to-t from-black/80 to-transparent transition-opacity duration-300 ' +
+          'absolute bottom-0 inset-x-0 px-4 pb-4 pt-10 transition-opacity duration-300 ' +
           (showControls ? 'opacity-100' : 'opacity-0 pointer-events-none')
         }
+        style={{ backgroundColor: 'rgba(0,0,0,0.85)' }}
       >
         <div className="flex items-center gap-3 mb-2">
           <span className="text-xs text-flixon-muted tabular-nums w-12 text-right">

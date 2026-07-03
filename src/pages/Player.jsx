@@ -112,6 +112,14 @@ function EmbedPlayer({ rawUrl, title, nav, onToggleList, showListBtn }) {
   const embedUrl = normalizeEmbedUrl(rawUrl);
   const [loading, setLoading] = useState(true);
 
+  // FORÇA REMONTAGEM do iframe quando a URL muda (troca de episódio).
+  // Sem isso, o React reusa o mesmo iframe e o onLoad não dispara de novo.
+  const [iframeKey, setIframeKey] = useState(0);
+  useEffect(() => {
+    setLoading(true);
+    setIframeKey((k) => k + 1);
+  }, [embedUrl]);
+
   // Timeout de segurança: esconde o spinner após 6s mesmo se onLoad
   // não disparar (comum no Android WebView com players que fazem
   // redirects internos como o fembed).
@@ -137,6 +145,7 @@ function EmbedPlayer({ rawUrl, title, nav, onToggleList, showListBtn }) {
       )}
 
       <iframe
+        key={iframeKey}
         src={embedUrl}
         title={title}
         className="w-full h-full"

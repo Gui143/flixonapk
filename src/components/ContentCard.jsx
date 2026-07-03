@@ -9,7 +9,8 @@ export default function ContentCard({ item }) {
       onClick={() => nav(`/details/${item.id}`)}
       className="group text-left w-40 shrink-0 focus:outline-none"
     >
-      <div className="relative rounded-lg overflow-hidden bg-flixon-card aspect-[2/3] shadow-card transition-all duration-300 group-hover:scale-105 group-hover:shadow-glow">
+      {/* SEM transparência/gradient na TV Box - cor sólida */}
+      <div className="relative rounded-lg overflow-hidden bg-neutral-900 aspect-[2/3] shadow-card transition-transform duration-300 group-hover:scale-105">
         {item.poster ? (
           <img
             src={item.poster}
@@ -18,11 +19,11 @@ export default function ContentCard({ item }) {
             className="w-full h-full object-cover"
           />
         ) : (
-          <div className="w-full h-full flex items-center justify-center text-flixon-muted text-xs p-2 text-center">
+          <div className="w-full h-full flex items-center justify-center text-neutral-400 text-xs p-2 text-center bg-neutral-900">
             {item.title}
           </div>
         )}
-        {/* Classificação indicativa no canto inferior esquerdo */}
+        {/* Classificação indicativa */}
         {item.ageRating && (
           <div className="absolute bottom-2 left-2">
             <AgeRating rating={item.ageRating} size={22} />
@@ -33,9 +34,10 @@ export default function ContentCard({ item }) {
             ★ {item.rating}
           </div>
         )}
-        {/* Overlay: sem backdrop-blur e sem bg-white/10 (TV Box não renderiza).
-            Cor sólida escura fixa para legibilidade em qualquer WebView. */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-3">
+        {/* Overlay de hover - SEM gradient/transparência.
+            TV Box renderiza bg-gradient como branco sólido.
+            Usa display none/block no hover (CSS simples). */}
+        <div className="absolute inset-0 bg-black opacity-0 group-hover:opacity-90 transition-opacity flex items-end p-3">
           <span className="text-white text-xs font-semibold">
             Ver detalhes →
           </span>
@@ -43,7 +45,7 @@ export default function ContentCard({ item }) {
       </div>
       <div className="mt-2 px-0.5">
         <div className="text-sm font-semibold truncate">{item.title}</div>
-        <div className="text-xs text-flixon-muted">
+        <div className="text-xs text-neutral-400">
           {item.year || '—'}
         </div>
       </div>
