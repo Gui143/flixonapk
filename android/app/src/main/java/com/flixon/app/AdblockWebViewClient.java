@@ -3,23 +3,25 @@ package com.flixon.app;
 import com.getcapacitor.Bridge;
 import com.getcapacitor.BridgeWebViewClient;
 
-import android.net.Uri;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import java.io.ByteArrayInputStream;
 
 /**
- * WebViewClient que estende o do Capacitor e adiciona:
+ * WebViewClient que estende o do Capacitor e adiciona bloqueio de anúncios.
  *
- * 1) BLOQUEIO DE RECURSOS (shouldInterceptRequest):
- *    Cancela anúncios antes de carregar, inclusive dentro de iframes.
- *    Verifica por DOMÍNIO e por PALAVRA-CHAVE na URL (pega cassinos rotativos).
+ * IMPORTANTE — duas camadas distintas:
  *
- * 2) BLOQUEIO DE NAVEGAÇÃO (shouldOverrideUrlLoading):
- *    Quando o player tenta abrir um anúncio (tigrinho/cassino),
- *    BLOQUEIA a navegação em vez de abrir no navegador externo.
- *    Isto é o que impede o app de sair pra tela do anúncio.
+ * 1) shouldInterceptRequest (RECURSOS):
+ *    Bloqueia APENAS por DOMÍNIO (isAdHost). NUNCA por palavra-chave.
+ *    Motivo: palavras como "/ads/", "/adv/" aparecem em URLs legítimas do
+ *    player (fembed), e bloqueá-las quebra o vídeo (loading infinito).
+ *
+ * 2) shouldOverrideUrlLoading (NAVEGAÇÃO):
+ *    Bloqueia por DOMÍNIO e por PALAVRA-CHAVE (isAdUrl).
+ *    É aqui que o "tigrinho" (Fortune Tiger) é pego — ele tenta navegar
+ *    para uma URL de cassino, e nós bloqueamos a navegação.
  */
 public class AdblockWebViewClient extends BridgeWebViewClient {
 
@@ -31,28 +33,25 @@ public class AdblockWebViewClient extends BridgeWebViewClient {
     }
 
     // ═══════════════════════════════════════════
-    //  1) BLOQUEIO DE RECURSOS (anúncios, scripts, iframes de ad)
-    //     Funciona em TODOS os frames, inclusive iframes cross-origin
+    //  RECURSOS: bloqueia SÓ por domínio (não por palavra-chave!)
+    //  Isto garante que o player fembed carregue seus scripts/CDN normalmente.
     // ═══════════════════════════════════════════
     @Override
     public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-        String url = null;
         String host = null;
         if (request != null && request.getUrl() != null) {
-            url = request.getUrl().toString();
             host = request.getUrl().getHost();
         }
-        // Bloqueia por domínio E por palavra-chave na URL completa
-        if (AdDomains.isAdHost(host) || AdDomains.isAdUrl(url)) {
+        // SÓ por domínio — nunca por palavra-chave (senão quebra o player)
+        if (AdDomains.isAdHost(host)) {
             return EMPTY;
         }
         return super.shouldInterceptRequest(view, request);
     }
 
     // ═══════════════════════════════════════════
-    //  2) BLOQUEIO DE NAVEGAÇÃO EXTERNA
-    //     O Capacitor abre URLs externas via launchIntent (navegador).
-    //     Se for anúncio (tigrinho), BLOQUEIA em vez de abrir.
+    //  NAVEGAÇÃO: bloqueia por domínio E por palavra-chave.
+    //  O tigrinho tenta redirecionar a página pra cá → bloqueado.
     // ═══════════════════════════════════════════
     @Override
     public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
@@ -60,11 +59,10 @@ public class AdblockWebViewClient extends BridgeWebViewClient {
         if (request != null && request.getUrl() != null) {
             url = request.getUrl().toString();
         }
-        // Se é anúncio → BLOQUEIA (return true = não navega)
+        // Se é anúncio/cassino por domínio ou palavra-chave → BLOQUEIA
         if (AdDomains.isAdUrl(url)) {
-            return true;
+            return true;  // true = não navega
         }
-        // Caso contrário, deixa o Capacitor decidir (file://, links internos, etc.)
         return super.shouldOverrideUrlLoading(view, request);
     }
 

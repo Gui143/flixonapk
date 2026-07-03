@@ -112,6 +112,15 @@ function EmbedPlayer({ rawUrl, title, nav, onToggleList, showListBtn }) {
   const embedUrl = normalizeEmbedUrl(rawUrl);
   const [loading, setLoading] = useState(true);
 
+  // Timeout de segurança: esconde o spinner após 6s mesmo se onLoad
+  // não disparar (comum no Android WebView com players que fazem
+  // redirects internos como o fembed).
+  useEffect(() => {
+    if (!loading) return;
+    const t = setTimeout(() => setLoading(false), 6000);
+    return () => clearTimeout(t);
+  }, [loading]);
+
   if (!embedUrl || !isSafeEmbedUrl(embedUrl)) {
     return (
       <InvalidState message="Embed inválido. Verifique a URL no painel admin." inline nav={nav} />
