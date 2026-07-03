@@ -45,9 +45,14 @@ public class AdDomains {
         "vibrantmedia.com", "intellitxt.com",
         "ninthrotation.com", "egresshazard.com",
         "greenredigreen.com", "graphtie.com", "strigops.com",
-        // ── Cassino / apostas (tigrinho e similares) ──
+        // ── Cassino / apostas (tigrinho, brazino, blaze e similares) ──
         "monetag.com", "profitabledisplaynetwork.com",
         "pubpower.com", "displaynetworksolutions.com",
+        "brazino777.com", "brazino-777", "brazino.bet",
+        "blaze.com", "blaze1.com", "blaze-apostas",
+        "bet365.com", "betano.com", "betfair.com",
+        "pixbet.com", "pix-bet", "stake.com",
+        "kto.com", "betnacional", "sportingbet.com",
         // ── Scam de roleta / prêmio (popunder do fembed) ──
         "waust.at", "alphonso.tv", "betwey.com",
         "astonishinginspiring.com", "clueff.com", "pushwoosh.com",
@@ -85,7 +90,10 @@ public class AdDomains {
         // Redes de anúncio comuns em players
         "monetag", "propellerads", "adskeeper", "hilltopads",
         "adcash", "adsterra", "popads", "popcash",
-        "onclickperformance", "highperformanceformat"
+        "onclickperformance", "highperformanceformat",
+        // Cassinos especificos (brazino, blaze)
+        "brazino", "brazino777", "blaze-apostas", "blaze-jogo",
+        "waust.at", "alphonso", "admaven"
     };
 
     /** Verifica por DOMÍNIO */
