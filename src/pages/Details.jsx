@@ -9,12 +9,24 @@ import AgeRating from '../components/AgeRating';
 export default function Details() {
   const { id } = useParams();
   const nav = useNavigate();
-  const { getContentById, isInList, toggleList, removeContent, episodeCount, castVote, getVote } = useAppData();
+  const { getContentById, isInList, toggleList, removeContent, episodeCount, castVote, getVote, planInfo } = useAppData();
   const { isAdmin } = useAuth();
   const item = getContentById(id);
 
   const [openSeason, setOpenSeason] = useState(null);
+  const [showPaywall, setShowPaywall] = useState(false);
   const vote = getVote(id);
+
+  // Verifica se pode assistir (tem plano ativo OU é admin)
+  const canWatch = isAdmin || planInfo?.active;
+
+  const handleWatch = () => {
+    if (!canWatch) {
+      setShowPaywall(true);
+      return;
+    }
+    nav(firstEp ? `/player/${item.id}/${firstEp.id}` : `/player/${item.id}`);
+  };
 
   useEffect(() => {
     if (item?.seasons?.length) setOpenSeason(item.seasons[0].id);
@@ -94,9 +106,7 @@ export default function Details() {
             <div className="flex flex-wrap items-center gap-3 mb-6">
               {canPlay ? (
                 <button
-                  onClick={() =>
-                    nav(firstEp ? `/player/${item.id}/${firstEp.id}` : `/player/${item.id}`)
-                  }
+                  onClick={handleWatch}
                   className="flex items-center gap-2 px-6 py-3 rounded-lg bg-flixon-violet hover:bg-flixon-violet-light font-semibold transition-colors shadow-glow"
                 >
                   ▶ Assistir
@@ -131,7 +141,7 @@ export default function Details() {
 
               {/* Polegar para cima (Like) */}
               <button
-                onClick={() => castVote('like')}
+                onClick={() => handleVote('like')}
                 title="Gostei"
                 className={
                   'w-12 h-12 flex items-center justify-center rounded-full border-2 transition-all ' +
@@ -236,7 +246,11 @@ export default function Details() {
                           return (
                             <button
                               key={e.id}
-                              onClick={() => hasSrc && nav(`/player/${item.id}/${e.id}`)}
+                              onClick={() => {
+                                if (!hasSrc) return;
+                                if (!canWatch) { setShowPaywall(true); return; }
+                                nav(`/player/${item.id}/${e.id}`);
+                              }}
                               disabled={!hasSrc}
                               className={
                                 'w-full flex items-center gap-3 px-4 py-2.5 text-left text-sm transition-colors ' +
@@ -268,6 +282,27 @@ export default function Details() {
           </div>
         )}
       </div>
+
+      {/* PAYWALL — sem plano ativo */}
+      {showPaywall && (
+        <div className="fixed inset-0 z-[100] bg-black/85 backdrop-blur-sm flex items-center justify-center p-6 animate-fade-in" onClick={() => setShowPaywall(false)}>
+          <div className="bg-flixon-card border border-flixon-violet/50 rounded-2xl max-w-md w-full p-6 text-center" onClick={(e) => e.stopPropagation()}>
+            <div className="text-5xl mb-4">🔒</div>
+            <h2 className="text-xl font-bold mb-2">Você precisa de um plano</h2>
+            <p className="text-flixon-muted text-sm mb-6">
+              Para assistir este conteúdo, assine um plano. Temos teste gratuito de 7 dias!
+            </p>
+            <div className="flex gap-3 justify-center">
+              <button onClick={() => setShowPaywall(false)} className="px-5 py-2.5 rounded-lg bg-white/5 hover:bg-white/10 font-semibold text-sm">
+                Agora não
+              </button>
+              <Link to="/plans" className="px-5 py-2.5 rounded-lg bg-flixon-violet hover:bg-flixon-violet-light font-semibold text-sm shadow-glow">
+                Ver planos →
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

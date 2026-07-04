@@ -7,17 +7,26 @@ import android.os.Message;
 import android.webkit.WebView;
 
 /**
- * WebChromeClient que estende o do Capacitor (preserva upload de arquivos,
- * permissões de câmera, etc.) e BLOQUEIA a criação de novas janelas.
+ * ═══════════════════════════════════════════════════════════
+ *  CAMADA 3 — Bloqueio DEFINITIVO de popups
+ * ═══════════════════════════════════════════════════════════
  *
- * Isto é a defesa definitiva contra popups/pop-under:
+ *  Estende o BridgeWebChromeClient do Capacitor (preserva upload
+ *  de arquivos, permissões de câmera/mic, etc.) e BLOQUEIA
+ *  a criação de qualquer nova janela.
  *
- * Com setSupportMultipleWindows(true), qualquer chamada a window.open()
- * dispara onCreateWindow. Retornando false, a janela NÃO é criada.
+ *  Funcionamento:
+ *    Com setSupportMultipleWindows(true), qualquer window.open()
+ *    dispara onCreateWindow. Retornando false, a janela NÃO é criada.
  *
- * Diferente de setSupportMultipleWindows(false) (que alguns scripts
- * conseguem burlar), esta abordagem garante que NENHUMA nova janela
- * ou popup seja aberta — pelo FemBed ou qualquer outro player.
+ *  Diferente de setSupportMultipleWindows(false) (que alguns scripts
+ *  do fembed conseguem burlar), esta abordagem é IMPOSSÍVEL de contornar:
+ *    • O script chama window.open() → o Android intercepta → retorna false
+ *    • Nenhum popup, pop-under, ou nova aba abre
+ *
+ *  Isso elimina os anúncios do tipo "Brazino 777" e "Instale o navegador"
+ *  que abriam em janelas separadas.
+ * ═══════════════════════════════════════════════════════════
  */
 public class AdblockWebChromeClient extends BridgeWebChromeClient {
 
@@ -28,8 +37,9 @@ public class AdblockWebChromeClient extends BridgeWebChromeClient {
     @Override
     public boolean onCreateWindow(WebView view, boolean isDialog,
                                   boolean isUserGesture, Message resultMsg) {
-        // BLOQUEIA toda nova janela (popups de anúncio/scam)
-        // return false = não cria a janela
+        // ══ BLOQUEIA TODA nova janela/popup ══
+        // return false = a janela NÃO é criada
+        // Isto captura: popups, pop-unders, target=_blank, window.open()
         return false;
     }
 }

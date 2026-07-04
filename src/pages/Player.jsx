@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAppData, categoryLabel } from '../context/AppDataContext';
 import { normalizeEmbedUrl, isDirectVideo, describeSource } from '../lib/embed';
@@ -113,21 +113,37 @@ function EmbedPlayer({ rawUrl, title, nav, onToggleList, showListBtn }) {
   const [loading, setLoading] = useState(true);
 
   // FORÇA REMONTAGEM do iframe quando a URL muda (troca de episódio).
-  // Sem isso, o React reusa o mesmo iframe e o onLoad não dispara de novo.
   const [iframeKey, setIframeKey] = useState(0);
   useEffect(() => {
     setLoading(true);
     setIframeKey((k) => k + 1);
   }, [embedUrl]);
 
-  // Timeout de segurança: esconde o spinner após 6s mesmo se onLoad
-  // não disparar (comum no Android WebView com players que fazem
-  // redirects internos como o fembed).
+  // Timeout de segurança
   useEffect(() => {
     if (!loading) return;
     const t = setTimeout(() => setLoading(false), 6000);
     return () => clearTimeout(t);
   }, [loading]);
+
+  // ── FULLSCREEN universal (funciona pra superflix, fembed, etc.) ──
+  const wrapRef = useRef(null);
+  const [isFs, setIsFs] = useState(false);
+
+  const toggleFs = () => {
+    const el = wrapRef.current;
+    if (!el) return;
+    if (!document.fullscreenElement) {
+      el.requestFullscreen?.()?.catch?.(() => {});
+    } else {
+      document.exitFullscreen?.()?.catch?.(() => {});
+    }
+  };
+  useEffect(() => {
+    const h = () => setIsFs(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', h);
+    return () => document.removeEventListener('fullscreenchange', h);
+  }, []);
 
   if (!embedUrl || !isSafeEmbedUrl(embedUrl)) {
     return (
@@ -136,7 +152,7 @@ function EmbedPlayer({ rawUrl, title, nav, onToggleList, showListBtn }) {
   }
 
   return (
-    <div className="relative w-full h-full bg-black">
+    <div ref={wrapRef} className="relative w-full h-full bg-black">
       {loading && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 z-10">
           <div className="w-10 h-10 border-2 border-flixon-violet/30 border-t-flixon-violet rounded-full animate-spin" />
@@ -154,28 +170,24 @@ function EmbedPlayer({ rawUrl, title, nav, onToggleList, showListBtn }) {
         allowFullScreen
       />
 
-      {/* Barra superior (apenas Voltar + Episódios) */}
-      <div className="absolute top-0 inset-x-0 p-4 flex items-center justify-between bg-gradient-to-b from-black/70 to-transparent pointer-events-none">
+      {/* Barra superior com botão de TELA CHEIA */}
+      <div className="absolute top-0 inset-x-0 p-4 flex items-center justify-between pointer-events-none z-20"
+        style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.7), transparent)' }}>
         <div className="flex items-center gap-2 pointer-events-auto">
-          <button
-            onClick={() => nav(-1)}
-            className="px-3 py-1.5 rounded-lg bg-black/40 hover:bg-white/10 backdrop-blur text-sm font-semibold"
-          >
-            ← Voltar
-          </button>
+          <button onClick={() => nav(-1)} className="px-3 py-1.5 rounded-lg bg-black text-sm font-semibold">← Voltar</button>
           {showListBtn && (
-            <button
-              onClick={onToggleList}
-              className="px-3 py-1.5 rounded-lg bg-black/40 hover:bg-white/10 backdrop-blur text-sm font-semibold"
-            >
-              ☰ Episódios
-            </button>
+            <button onClick={onToggleList} className="px-3 py-1.5 rounded-lg bg-black text-sm font-semibold">☰ Episódios</button>
           )}
         </div>
-        <span className="text-sm font-semibold truncate max-w-[60%] text-shadow-hero pr-2">
-          {title}
-        </span>
-        <span className="w-10" />
+        <span className="text-sm font-semibold truncate max-w-[45%] text-shadow-hero px-2">{title}</span>
+        <button onClick={toggleFs} className="pointer-events-auto px-3 py-1.5 rounded-lg bg-black text-sm font-semibold flex items-center gap-1.5" title="Tela cheia">
+          {isFs ? (
+            <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M9 3v3a3 3 0 0 1-3 3H3M21 9h-3a3 3 0 0 1-3-3V3M3 15h3a3 3 0 0 1 3 3v3M15 21v-3a3 3 0 0 1 3-3h3" /></svg>
+          ) : (
+            <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 9V3h6M21 9V3h-6M3 15v6h6M21 15v6h-6" /></svg>
+          )}
+          <span className="hidden sm:inline">{isFs ? 'Sair' : 'Tela cheia'}</span>
+        </button>
       </div>
     </div>
   );

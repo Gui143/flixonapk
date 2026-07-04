@@ -447,14 +447,25 @@ function SeasonsEditor({ content, addSeason, updateSeason, removeSeason, addEpis
 function Profiles() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const { adminSetPlan } = useAppData();
 
-  useEffect(() => {
-    // Busca usuários via função RPC (requer SQL: supabase-rpc-users.sql)
-    supabase.rpc('list_users').then(({ data, error }) => {
-      if (data) setUsers(data);
-      setLoading(false);
-    }).catch(() => setLoading(false));
-  }, []);
+  const loadUsers = async () => {
+    setLoading(true);
+    const { data, error } = await supabase.rpc('list_users');
+    if (data) setUsers(data);
+    setLoading(false);
+  };
+
+  useEffect(() => { loadUsers(); }, []);
+
+  const handleSetPlan = async (userId, planId) => {
+    const res = await adminSetPlan(userId, planId);
+    if (res.ok) {
+      loadUsers(); // recarrega a lista
+    } else {
+      alert(res.error || 'Erro ao definir plano.');
+    }
+  };
 
   return (
     <div className="max-w-3xl">
@@ -463,45 +474,54 @@ function Profiles() {
           <thead className="bg-white/5 text-flixon-muted text-left">
             <tr>
               <th className="px-4 py-3">E-mail</th>
-              <th className="px-4 py-3">Função</th>
-              <th className="px-4 py-3">Cadastro</th>
-              <th className="px-4 py-3">Último login</th>
+              <th className="px-4 py-3">Plano</th>
+              <th className="px-4 py-3">Expira</th>
+              <th className="px-4 py-3">Ação</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-flixon-border">
             {loading ? (
-              <tr><td colSpan={4} className="px-4 py-6 text-flixon-muted text-center">Carregando usuários...</td></tr>
+              <tr><td colSpan={4} className="px-4 py-6 text-flixon-muted text-center">Carregando...</td></tr>
             ) : users.length === 0 ? (
               <tr><td colSpan={4} className="px-4 py-6 text-flixon-muted text-center">
-                Nenhum usuário ou RPC não configurado.<br/>
-                <span className="text-xs">Rode o arquivo <code className="text-flixon-violet-light">supabase-rpc-users.sql</code> no SQL Editor.</span>
+                Rode <code className="text-flixon-violet-light">supabase-planos.sql</code> no SQL Editor.
               </td></tr>
             ) : users.map((u, i) => (
               <tr key={i}>
-                <td className="px-4 py-3 font-medium">{sanitizeText(u.email)}</td>
+                <td className="px-4 py-3 font-medium">
+                  {sanitizeText(u.email)}
+                  {u.is_admin && <span className="ml-2 text-[10px] text-flixon-violet-light">★ Admin</span>}
+                </td>
                 <td className="px-4 py-3">
-                  {u.is_admin || u.email === ADMIN_EMAIL ? (
-                    <span className="text-flixon-violet-light font-semibold">Admin</span>
+                  {u.plan_name ? (
+                    <span className="text-flixon-violet-light font-semibold">{u.plan_name}</span>
                   ) : (
-                    <span className="text-flixon-muted">Usuário</span>
+                    <span className="text-flixon-muted">Sem plano</span>
                   )}
                 </td>
-                <td className="px-4 py-3 text-flixon-muted">
-                  {u.created_at ? new Date(u.created_at).toLocaleDateString('pt-BR') : '—'}
+                <td className="px-4 py-3 text-flixon-muted text-xs">
+                  {u.plan_expires_at ? new Date(u.plan_expires_at).toLocaleDateString('pt-BR') : '—'}
                 </td>
-                <td className="px-4 py-3 text-flixon-muted">
-                  {u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString('pt-BR') : '—'}
+                <td className="px-4 py-3">
+                  <select
+                    value={u.plan_id || ''}
+                    onChange={(e) => e.target.value && handleSetPlan(u.id, e.target.value)}
+                    className="px-2 py-1 rounded-lg bg-flixon-bg border border-flixon-border focus:border-flixon-violet focus:outline-none text-xs"
+                  >
+                    <option value="">Definir plano...</option>
+                    <option value="basic">Teste (7 dias)</option>
+                    <option value="standard">Standard</option>
+                    <option value="premium">Premium</option>
+                  </select>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      {users.length > 0 && (
-        <p className="text-flixon-muted text-xs mt-3">
-          {users.length} usuário(s) cadastrado(s) • Senhas nunca exibidas (hash no Supabase Auth)
-        </p>
-      )}
+      <p className="text-flixon-muted text-xs mt-3">
+        Selecione um plano no dropdown para atribuir a um usuário. O admin não precisa de plano.
+      </p>
     </div>
   );
 }

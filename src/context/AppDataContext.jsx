@@ -3,9 +3,9 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from './AuthContext';
 
 const DEFAULT_PLANS = [
-  { id: 'basic', name: 'Básico', price: 19.9, period: '/mês', quality: 'HD 720p', devices: 1, features: ['Catálogo completo', 'Qualidade HD 720p', '1 tela simultânea', 'Sem anúncios'] },
-  { id: 'standard', name: 'Standard', price: 39.9, period: '/mês', quality: 'Full HD 1080p', devices: 2, features: ['Catálogo completo', 'Qualidade Full HD', '2 telas simultâneas', 'Download offline'] },
-  { id: 'premium', name: 'Premium', price: 59.9, period: '/mês', quality: '4K + HDR', devices: 4, highlight: true, features: ['Catálogo completo', '4K Ultra HD + HDR', '4 telas simultâneas', 'Áudio espacial', 'Downloads ilimitados'] }
+  { id: 'basic', name: 'Teste', price: 0, period: '/7 dias', quality: 'HD 720p', devices: 1, features: ['Catálogo completo', 'Qualidade HD 720p', '1 tela simultânea', 'Teste de 7 dias', 'Apenas 1 vez por conta'] },
+  { id: 'standard', name: 'Standard', price: 9.99, period: '/mês', quality: 'Full HD 1080p', devices: 2, features: ['Catálogo completo', 'Qualidade Full HD', '2 telas simultâneas', 'Download offline'] },
+  { id: 'premium', name: 'Premium', price: 19.99, period: '/mês', quality: '4K + HDR', devices: 4, highlight: true, features: ['Catálogo completo', '4K Ultra HD + HDR', '4 telas simultâneas', 'Áudio espacial', 'Downloads ilimitados'] }
 ];
 
 export const CATEGORIES = [
@@ -75,6 +75,7 @@ export function AppDataProvider({ children }) {
   const [mylist, setMylist] = useState([]);
   const [ratings, setRatings] = useState({});
   const [userPlan, setUserPlan] = useState(null);
+  const [planInfo, setPlanInfo] = useState({ active: false, name: null, daysLeft: 0 });
 
   // ── Carrega conteúdo (com seasons + episodes aninhados) ──
   const loadContent = useCallback(async () => {
@@ -112,25 +113,38 @@ export function AppDataProvider({ children }) {
     loadPlans();
   }, [loadContent, loadPlans]);
 
-  // ── Carrega mylist e ratings quando o usuário muda ──
+  // ── Carrega mylist, ratings e plano quando o usuário muda ──
   useEffect(() => {
     if (!user) {
       setMylist([]);
       setRatings({});
       setUserPlan(null);
+      setPlanInfo({ active: false, name: null, daysLeft: 0 });
       return;
     }
     (async () => {
       const [{ data: listData }, { data: rateData }, { data: planData }] = await Promise.all([
         supabase.from('mylist').select('content_id').eq('user_id', user.id),
         supabase.from('ratings').select('content_id, vote').eq('user_id', user.id),
-        supabase.from('user_plans').select('plan_id').eq('user_id', user.id).maybeSingle()
+        supabase.rpc('has_active_plan')
       ]);
       setMylist((listData || []).map((r) => r.content_id));
       const rateMap = {};
       (rateData || []).forEach((r) => { rateMap[r.content_id] = r.vote; });
       setRatings(rateMap);
-      setUserPlan(planData?.plan_id || null);
+      // planData vem do RPC has_active_plan
+      if (planData && planData.length > 0) {
+        const p = planData[0];
+        setUserPlan(p.plan_id);
+        setPlanInfo({
+          active: p.has_plan,
+          name: p.plan_name,
+          daysLeft: p.days_left || 0
+        });
+      } else {
+        setUserPlan(null);
+        setPlanInfo({ active: false, name: null, daysLeft: 0 });
+      }
     })();
   }, [user]);
 
@@ -407,13 +421,29 @@ export function AppDataProvider({ children }) {
     setPlans((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
   }, []);
 
+  // Usuário assina plano (via RPC — trial só 1x)
   const subscribePlan = useCallback(async (planId) => {
-    if (!user) return;
-    await supabase
-      .from('user_plans')
-      .upsert({ user_id: user.id, plan_id: planId, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
-    setUserPlan(planId);
+    if (!user) return { ok: false, error: 'Faça login.' };
+    const { data, error } = await supabase.rpc('subscribe_plan', { plan: planId });
+    if (error || data === false) {
+      return { ok: false, error: 'Não foi possível assinar (trial já usado ou erro).' };
+    }
+    const { data: planData } = await supabase.rpc('has_active_plan');
+    if (planData && planData.length > 0) {
+      const p = planData[0];
+      setUserPlan(p.plan_id);
+      setPlanInfo({ active: p.has_plan, name: p.plan_name, daysLeft: p.days_left || 0 });
+    }
+    return { ok: true };
   }, [user]);
+
+  // Admin define plano de qualquer usuário
+  const adminSetPlan = useCallback(async (targetUserId, planId) => {
+    const { data, error } = await supabase.rpc('admin_set_user_plan', {
+      target_user: targetUserId, plan: planId
+    });
+    return { ok: !error && data === true, error: error?.message };
+  }, []);
 
   const value = {
     library,
@@ -446,6 +476,8 @@ export function AppDataProvider({ children }) {
     updatePlan,
     userPlan,
     subscribePlan,
+    adminSetPlan,
+    planInfo,
     reload: loadContent
   };
 

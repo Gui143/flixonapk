@@ -25,6 +25,7 @@ export default function VideoPlayer({ src, title, poster, type, id, episodeId })
   const [showControls, setShowControls] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
   const [live, setLive] = useState(false);
+  const [cssFs, setCssFs] = useState(false); // fallback CSS de fullscreen
 
   // Configura HLS para streams .m3u8 (canais ao vivo)
   // OTIMIZADO P/ TV BOX: configs agressivas para hardware fraco
@@ -101,14 +102,44 @@ export default function VideoPlayer({ src, title, poster, type, id, episodeId })
 
   const toggleFullscreen = () => {
     const el = wrapRef.current;
-    if (!document.fullscreenElement) el?.requestFullscreen?.();
-    else document.exitFullscreen?.();
+    if (!el) return;
+    // Tenta a Fullscreen API nativa primeiro
+    if (!document.fullscreenElement && !cssFs) {
+      const req = el.requestFullscreen || el.webkitRequestFullscreen || el.webkitEnterFullscreen;
+      if (req) {
+        try {
+          const r = req.call(el);
+          if (r && r.catch) {
+            r.catch(() => {
+              // Fallback: fullscreen via CSS se a API falhar
+              setCssFs(true);
+            });
+          }
+          return;
+        } catch (e) {
+          setCssFs(true);
+          return;
+        }
+      }
+      // Sem API de fullscreen: usa CSS
+      setCssFs(true);
+    } else {
+      // Sai do fullscreen
+      if (document.fullscreenElement) {
+        try { document.exitFullscreen?.()?.catch?.(() => {}); } catch (e) {}
+      }
+      setCssFs(false);
+    }
   };
 
   useEffect(() => {
     const h = () => setFullscreen(!!document.fullscreenElement);
     document.addEventListener('fullscreenchange', h);
-    return () => document.removeEventListener('fullscreenchange', h);
+    document.addEventListener('webkitfullscreenchange', h);
+    return () => {
+      document.removeEventListener('fullscreenchange', h);
+      document.removeEventListener('webkitfullscreenchange', h);
+    };
   }, []);
 
   const wake = useCallback(() => {
@@ -129,11 +160,14 @@ export default function VideoPlayer({ src, title, poster, type, id, episodeId })
 
   const pct = duration ? (current / duration) * 100 : 0;
 
+  const isFsActive = fullscreen || cssFs;
+
   return (
     <div
       ref={wrapRef}
       onMouseMove={wake}
-      className="relative w-full h-full bg-black flex items-center justify-center overflow-hidden select-none"
+      className={'relative bg-black flex items-center justify-center overflow-hidden select-none ' +
+        (cssFs ? 'fixed inset-0 z-[9999] w-screen h-screen' : 'w-full h-full')}
     >
       <video
         ref={vref}
@@ -255,7 +289,7 @@ export default function VideoPlayer({ src, title, poster, type, id, episodeId })
           </div>
 
           <button onClick={toggleFullscreen} className="hover:text-flixon-violet-light" title="Tela cheia">
-            {fullscreen ? (
+            {isFsActive ? (
               <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
                 <path d="M9 3v3a3 3 0 0 1-3 3H3M21 9h-3a3 3 0 0 1-3-3V3M3 15h3a3 3 0 0 1 3 3v3M15 21v-3a3 3 0 0 1 3-3h3" />
               </svg>
